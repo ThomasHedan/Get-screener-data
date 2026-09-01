@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest>=8.0
+ruff>=0.6
+# Optional: only needed for warrior_screener.dataset (the pandas research loader)
+pandas>=2.0

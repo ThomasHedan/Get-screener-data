@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "warrior-screener"
+version = "0.1.0"
+description = "Warrior-Trading-style momentum screener with a survivorship-bias-free intraday archive"
+requires-python = ">=3.10"
+dependencies = ["requests>=2.31", "PyYAML>=6.0"]
+
+[project.optional-dependencies]
+research = ["pandas>=2.0"]
+dev = ["pytest>=8.0", "ruff>=0.6", "pandas>=2.0"]
+
+[project.scripts]
+warrior-screener = "warrior_screener.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["warrior_screener*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

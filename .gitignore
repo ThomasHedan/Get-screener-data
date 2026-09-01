@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets
+.env
+*.key
+
+# Collected market data (large, regenerable from the provider; keep it out of git
+# unless you deliberately want the archive versioned -- see README "Storage")
+# (`data/*` rather than `data/`, so the .gitkeep below can be re-included)
+data/*
+!data/.gitkeep

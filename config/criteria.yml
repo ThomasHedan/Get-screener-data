@@ -1,0 +1,61 @@
+# Warrior-Trading-style momentum screen.
+#
+# Defaults mirror the criteria Ross Cameron publicly describes for his gap-and-go
+# scans. Everything here is a research knob -- change it, re-run
+# `python -m warrior_screener rescan --date <day>` against the cached archive,
+# and compare the selections without spending a single API call.
+
+provider: polygon
+data_dir: data
+
+# Cost control. Each enriched candidate costs one reference lookup and (if it is
+# still in the running) one news lookup. On Polygon's free tier (5 req/min) a
+# session with max_enrich: 40 takes roughly 15-25 minutes.
+max_enrich: 40
+requests_per_minute: 5
+reference_cache_days: 30
+
+# Re-fetch the previous session when its cached copy is older than this many
+# days, so the previous close is split-adjusted consistently with today's bars.
+# These small caps reverse-split often; without this a 1:10 split reads as +900%.
+refresh_previous_after_days: 1
+
+collect_intraday: true
+
+criteria:
+  # --- Price: Ross trades cheap stocks; $2-$10 is the sweet spot, $20 the cap.
+  min_price: 1.0
+  max_price: 20.0
+
+  # --- Momentum: up at least 10% on the session.
+  min_change_pct: 10.0
+  # min_gap_pct: 4.0        # uncomment to also demand an opening gap
+
+  # --- Volume: real liquidity, and at least 5x its own normal.
+  min_day_volume: 500000
+  min_relative_volume: 5.0
+  rvol_lookback_days: 20
+
+  # --- Share structure: low float is the whole point. Set to null to disable.
+  max_float_shares: 10000000
+  max_market_cap: null
+
+  # --- Catalyst: a gapper without news is usually not worth trading.
+  require_news_catalyst: true
+  min_news_articles: 1
+
+  # --- Universe hygiene: common stock and ADRs on major exchanges only.
+  allowed_security_types: ["CS", "ADRC"]
+  allowed_exchanges: ["XNAS", "XNYS", "XASE", "ARCX", "BATS"]
+
+  # --- Selection: keep 5-10 names per day.
+  max_in_play: 10
+  min_in_play: 5
+  fill_to_min: true
+  relaxed_drop_filters: ["float", "news", "news_unknown", "relative_volume"]
+
+  # --- Ranking weights, applied to percentile ranks inside the day's pool.
+  weight_relative_volume: 0.40
+  weight_change_pct: 0.30
+  weight_float: 0.20
+  weight_news: 0.10
