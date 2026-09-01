@@ -197,6 +197,48 @@ a gap in the archive is visible rather than silent.
 
 ---
 
+## Live check: `snapshot` (experimental, this branch only)
+
+```bash
+python -m warrior_screener snapshot            # what's in play right now
+python -m warrior_screener snapshot --no-news  # widen to structural qualifiers only
+python -m warrior_screener snapshot --save     # also write to data/live_snapshots/
+```
+
+No API key, no rate-limit budget, results in a couple of seconds. It calls
+TradingView's public screener endpoint (`scanner.tradingview.com` — the same
+JSON call `tradingview.com/screener` makes), which is the only free source
+found that returns relative volume, average volume, float and market cap for
+the **whole US market in one request**. It reuses the same criteria, scoring
+and selection as the archived pipeline (`warrior_screener.scanner`), so a
+`snapshot` candidate means the same thing a `collect` candidate does — with
+three differences worth knowing before you rely on it:
+
+1. **Unofficial and undocumented.** This is a reverse-engineered endpoint with
+   no published contract or SLA. It could change or start blocking non-browser
+   traffic without notice. Treat it as a convenience, not infrastructure.
+2. **Relative volume is time-of-day normalized, not full-session.** It compares
+   volume so far today against the average volume traded *by this same clock
+   time* over the past 10 sessions — not `today's total volume / N-day average
+   total volume`, which is what the archived Polygon pipeline computes. The two
+   numbers are not comparable, and TradingView's figure only converges toward a
+   full-day RVOL near the close. This is arguably the more useful number for a
+   live pre-market check; it is not the same measurement as `in_play.csv`.
+3. **No date parameter, and no free bulk news source.** `snapshot` only ever
+   sees the current live session — it cannot backfill a past date, which is
+   why it is a separate command rather than a flag on `collect`. And with no
+   catalyst check behind it, every result carries `news_checked=False`; by
+   default that makes every row `relaxed` rather than `strict` (the same
+   "unknown, not absent" signal the archived pipeline uses), so pass
+   `--no-news` if you want the structural qualifiers surfaced as `strict`.
+
+`--save` writes to `data/live_snapshots/<timestamp>.csv`, deliberately **not**
+`data/scans/` or `in_play_history.csv` — mixing a time-of-day-normalized RVOL
+into the archive's full-day RVOL column would quietly corrupt anything trained
+on it.
+
+---
+
 ## Data provider
 
 [Polygon.io](https://polygon.io) is the default, for two reasons:
@@ -339,7 +381,7 @@ never silently run a different screen than you think.
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest          # 116 tests, no network and no API key required
+python -m pytest          # 151 tests, no network and no API key required
 python -m ruff check .
 python -m ruff format .
 ```

@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +74,16 @@ def build_parser() -> argparse.ArgumentParser:
     show_cmd.add_argument("--date", default="today", help="ISO date, 'today' or 'yesterday'")
 
     subparsers.add_parser("status", help="Summarise archive coverage")
+
+    snapshot_cmd = subparsers.add_parser(
+        "snapshot",
+        help="Live screen right now via TradingView (no API key, no archive writes)",
+    )
+    snapshot_cmd.add_argument(
+        "--save", action="store_true", help="Also write the result to data/live_snapshots/"
+    )
+    _add_criteria_flags(snapshot_cmd)
+
     return parser
 
 
@@ -243,6 +253,60 @@ def _cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_snapshot(args: argparse.Namespace) -> int:
+    """Screen the live TradingView snapshot and print it -- no archive write
+    unless --save is given, and never touches Polygon or the API budget."""
+    settings = _settings_from_args(args)
+    from warrior_screener.live_snapshot import screen_live
+    from warrior_screener.providers.tradingview import TradingViewError
+
+    try:
+        result = screen_live(settings.criteria)
+    except TradingViewError as exc:
+        logger.error("%s", exc)
+        return 1
+
+    print(
+        f"Live snapshot, {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')} "
+        f"({result.stats['universe_rows']} tickers scanned)"
+    )
+    _print_candidates(result.in_play)
+    print(
+        "\n(TradingView relative volume is time-of-day normalized and no free "
+        "news source backs this path, so every row is 'relaxed' unless\n"
+        " --no-news is passed; this is a live check, not part of the "
+        "archive -- see README for the archived Polygon pipeline.)"
+    )
+
+    if args.save:
+        path = _save_snapshot(settings.data_dir, result)
+        print(f"\nSaved to {path}")
+    return 0
+
+
+def _save_snapshot(data_dir: Path, result: Any) -> Path:
+    """Write a live snapshot's in-play rows to their own timestamped file.
+
+    Kept out of scans/ and in_play_history.csv on purpose: this scan's
+    relative-volume figure is not computed the same way as the archived
+    pipeline's, so mixing the two would silently corrupt that comparison.
+    """
+    import csv
+
+    from warrior_screener.models import Candidate
+
+    timestamp = datetime.now().astimezone().strftime("%Y-%m-%dT%H-%M-%S")
+    path = Path(data_dir) / "live_snapshots" / f"{timestamp}.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = list(Candidate(ticker="", trade_date=date.today()).to_row())
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for candidate in result.in_play:
+            writer.writerow(candidate.to_row())
+    return path
+
+
 def _cmd_status(args: argparse.Namespace) -> int:
     settings = _settings_from_args(args)
     archive = Archive(settings.data_dir)
@@ -333,6 +397,7 @@ _COMMANDS = {
     "rescan": _cmd_rescan,
     "show": _cmd_show,
     "status": _cmd_status,
+    "snapshot": _cmd_snapshot,
 }
 
 
