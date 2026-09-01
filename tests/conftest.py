@@ -128,7 +128,17 @@ def archive(tmp_path) -> Archive:
 
 @pytest.fixture
 def settings(tmp_path, criteria) -> Settings:
-    return Settings(api_key="test-key", data_dir=tmp_path / "data", criteria=criteria)
+    # use_tradingview_reference defaults on in production, but every test here
+    # exercises the FakeProvider's own reference path deliberately -- leaving
+    # it on would make collect_day/backfill silently hit the real, live
+    # TradingView endpoint on every test run. Tests for that integration
+    # (tests/test_collector_snapshot.py) override this explicitly.
+    return Settings(
+        api_key="test-key",
+        data_dir=tmp_path / "data",
+        criteria=criteria,
+        use_tradingview_reference=False,
+    )
 
 
 @pytest.fixture

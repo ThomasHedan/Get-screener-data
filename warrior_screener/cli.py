@@ -51,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
     collect_cmd.add_argument(
         "--no-intraday", action="store_true", help="Skip minute-bar collection"
     )
+    collect_cmd.add_argument(
+        "--no-tradingview-reference",
+        action="store_true",
+        help="Skip the free TradingView reference cache; use Polygon for every lookup",
+    )
     _add_criteria_flags(collect_cmd)
 
     backfill_cmd = subparsers.add_parser("backfill", help="Collect a range of sessions")
@@ -61,6 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
     backfill_cmd.add_argument("--force", action="store_true", help="Re-collect archived sessions")
     backfill_cmd.add_argument(
         "--no-intraday", action="store_true", help="Skip minute-bar collection"
+    )
+    backfill_cmd.add_argument(
+        "--no-tradingview-reference",
+        action="store_true",
+        help="Skip the free TradingView reference cache; use Polygon for every lookup",
     )
     _add_criteria_flags(backfill_cmd)
 
@@ -137,6 +147,8 @@ def _settings_from_args(args: argparse.Namespace) -> Settings:
     }
     if getattr(args, "no_intraday", False):
         overrides["collect_intraday"] = False
+    if getattr(args, "no_tradingview_reference", False):
+        overrides["use_tradingview_reference"] = False
     return load_settings(args.config, overrides=overrides)
 
 

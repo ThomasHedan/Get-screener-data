@@ -133,10 +133,19 @@ next day needs it, and a failed session is logged and skipped rather than
 aborting the range. Re-running is idempotent: archived sessions are skipped
 unless you pass `--force`.
 
-**Budget the time before you start it.** On the free tier (5 requests/minute) a
-session takes roughly 15-25 minutes, so a year of history is a multi-day run.
-Start with a month to confirm the output looks right. It is safe to interrupt
-with Ctrl-C and resume — completed sessions are skipped on the next run.
+**Budget the time before you start it**, even though it is now considerably
+faster than a raw Polygon-only setup. By default (`use_tradingview_reference:
+true`), reference lookups — exchange, security type, share count, up to
+`max_enrich` (40) Polygon calls a day — are answered for free from a single
+TradingView snapshot fetched once for the whole backfill instead. What is
+still bound by Polygon's 5-requests/minute free tier is the grouped daily bar
+(1 call/session), news lookups (varies with how many candidates survive the
+coarse filters — usually a handful, not 40), and minute bars for the 5-10
+in-play names. That is a real cut versus the old per-ticker-reference pace,
+but treat it as directional rather than a promised number — actual timing
+depends on how many candidates survive on a given day. Start with a month to
+see it for yourself. It is safe to interrupt with Ctrl-C and resume —
+completed sessions are skipped on the next run.
 
 ### 5. Everyday commands
 
@@ -237,11 +246,19 @@ three differences worth knowing before you rely on it:
 into the archive's full-day RVOL column would quietly corrupt anything trained
 on it.
 
+The same TradingView snapshot has a second, quieter use in `collect` and
+`backfill` — see "Cutting Polygon calls with the TradingView reference cache"
+under Data provider below. That use is on by default and unrelated to running
+`snapshot` yourself; the two share a data source, not a code path that mixes
+their results.
+
 ---
 
 ## Data provider
 
-[Polygon.io](https://polygon.io) is the default, for two reasons:
+[Polygon.io](https://polygon.io) — rebranded to **Massive.com** as of 2026;
+the same API key and `api.polygon.io` endpoints keep working, only the
+marketing site and billing pages moved — is the default, for two reasons:
 
 1. `/v2/aggs/grouped` prices the **entire** US equity universe for one session in
    a single request, so a daily scan costs ~1 API call plus enrichment rather
@@ -249,16 +266,41 @@ on it.
 2. Its historical endpoints keep serving tickers **after they are delisted**,
    which is the whole reason this archive can avoid survivorship bias.
 
-**It works on the free tier** (5 requests/minute, end-of-day data). One session
-costs roughly: 1 grouped call + up to `max_enrich` reference lookups + a news
-lookup per surviving candidate + one call per in-play ticker for minute bars —
-about 50 calls, so ~15–25 minutes of wall clock at 5 rpm. Reference data is
-cached for 30 days, so a long backfill gets much cheaper as it goes. On a paid
-plan, raise `requests_per_minute` and it finishes in seconds.
+**It works on the free tier** (5 requests/minute, end-of-day data, **2 years of
+history** — a hard ceiling on the free plan, not something this tool can work
+around). What still uses that 5-req/min budget for one session: the grouped
+daily call, a news lookup per surviving candidate, and one call per in-play
+ticker for minute bars. Reference lookups (exchange, security type, share
+count) do **not** by default — see below. On a paid plan, raise
+`requests_per_minute` and it finishes in seconds.
 
 To use a different vendor, implement the four methods of
 `warrior_screener.providers.base.MarketDataProvider` and wire it into
 `cli._make_provider`. Nothing else in the codebase knows about Polygon.
+
+### Cutting Polygon calls with the TradingView reference cache
+
+`use_tradingview_reference: true` (the default) answers reference lookups from
+the free TradingView snapshot (the same one behind `snapshot` — see below)
+instead of a Polygon call, for any ticker still listed. This is fetched
+**once** per `collect` or `backfill` run, not once per session, so it costs a
+single ~1-second HTTP request regardless of how many days you are backfilling
+— normally the largest single cut to a backfill's Polygon call count, since
+reference lookups could otherwise run up to `max_enrich` (40) calls a day.
+
+A ticker missing from the snapshot — the common case is one that has since
+been delisted, since a live snapshot only lists what is currently tradeable —
+falls back to Polygon exactly as before, so the archive's coverage of
+long-gone tickers is unaffected. If the snapshot endpoint is unreachable, the
+run logs a warning and continues on Polygon alone rather than failing.
+
+The trade-off: TradingView's classification is *current*, applied to a
+possibly historical date. Exchange, security type and share count change
+rarely enough that this is a reasonable stand-in — the same kind of proxy
+already accepted for float (see below) — but it is not exact for a ticker that
+has changed exchange or structure since. Turn it off with
+`--no-tradingview-reference` or `use_tradingview_reference: false` if that
+matters for your research.
 
 ### Known data limitation: float vs. shares outstanding
 
@@ -381,7 +423,7 @@ never silently run a different screen than you think.
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest          # 151 tests, no network and no API key required
+python -m pytest          # 162 tests, no network and no API key required
 python -m ruff check .
 python -m ruff format .
 ```
@@ -394,6 +436,12 @@ are pure functions over it.
 
 - **This is a data pipeline, not a trading system.** It reproduces the screen and
   records what happened; it takes no position on entries, exits or sizing.
+- **The free tier caps history at 2 years.** This is Polygon/Massive's own
+  limit, not something faster code or the TradingView reference cache changes
+  — it applies to how far back `grouped_daily` and minute bars can be
+  requested at all. Longer history needs a paid plan (or accept that the
+  archive's depth is bounded by when you started running it, which is exactly
+  the survivorship-bias-free advantage described at the top of this file).
 - **The screen is end-of-day.** It reconstructs which stocks *were* in play using
   the completed session, which is the right basis for research but is not the
   live 09:20 ET pre-market scanner a discretionary trader watches.

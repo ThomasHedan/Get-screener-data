@@ -15,10 +15,37 @@ from warrior_screener.config import Settings
 from warrior_screener.history import load_history
 from warrior_screener.intraday import compute_features
 from warrior_screener.providers.base import MarketDataProvider, ProviderError
+from warrior_screener.providers.tradingview import (
+    MarketSnapshotRow,
+    TradingViewError,
+    fetch_market_snapshot,
+)
 from warrior_screener.scanner import Enricher, ScanResult, run_scan
 from warrior_screener.storage import Archive
 
 logger = logging.getLogger(__name__)
+
+
+def _maybe_fetch_snapshot(settings: Settings) -> dict[str, MarketSnapshotRow]:
+    """Fetch TradingView's market snapshot once, or return {} if disabled/unreachable.
+
+    A failure here (network hiccup, the endpoint changing shape) must never
+    abort a collection: the reference-lookup fallback to the historical
+    provider still works with an empty snapshot, just at the old, slower,
+    rate-limited pace. See warrior_screener.scanner.Enricher.
+    """
+    if not settings.use_tradingview_reference:
+        return {}
+    try:
+        rows = fetch_market_snapshot()
+    except TradingViewError:
+        logger.warning(
+            "TradingView snapshot unavailable; falling back to per-ticker "
+            "provider lookups for reference data",
+            exc_info=True,
+        )
+        return {}
+    return {row.ticker: row for row in rows}
 
 
 @dataclass
@@ -39,8 +66,19 @@ def collect_day(
     trade_date: date,
     *,
     force: bool = False,
+    tradingview_snapshot: dict[str, MarketSnapshotRow] | None = None,
 ) -> CollectionOutcome:
-    """Screen ``trade_date`` and archive the scan, intraday bars and features."""
+    """Screen ``trade_date`` and archive the scan, intraday bars and features.
+
+    ``tradingview_snapshot``, when given, is used to answer reference lookups
+    without touching Polygon's rate-limited budget (see
+    ``warrior_screener.scanner.Enricher``). Pass it in explicitly from
+    :func:`backfill` so one HTTP call serves an entire range of sessions
+    instead of being re-fetched -- pointlessly, since it is always the current
+    snapshot -- on every single day. Left as ``None`` here, a single-session
+    ``collect_day`` call fetches its own (if ``settings.use_tradingview_reference``
+    allows it).
+    """
     if not force and archive.scan_dir(trade_date).joinpath("in_play.csv").exists():
         logger.info("Scan for %s already archived; skipping (use --force to redo)", trade_date)
         return CollectionOutcome(trade_date, "skipped")
@@ -62,7 +100,9 @@ def collect_day(
         settings.criteria.rvol_lookback_days,
         refresh_previous_after_days=settings.refresh_previous_after_days,
     )
-    enricher = Enricher(provider, archive, settings)
+    if tradingview_snapshot is None:
+        tradingview_snapshot = _maybe_fetch_snapshot(settings)
+    enricher = Enricher(provider, archive, settings, snapshot=tradingview_snapshot)
     try:
         result = run_scan(bars, history, settings, enricher, trade_date)
     finally:
@@ -149,9 +189,24 @@ def backfill(
     Runs oldest-first so each day's RVOL window is already cached by the time
     the next day needs it. A failure on one session is recorded and the walk
     continues -- a single bad day should not abandon a month of backfill.
+
+    Fetches the TradingView reference snapshot exactly once for the whole
+    range (it always reflects the live market, so re-fetching it per day would
+    just repeat the same request), which is normally what turns a
+    rate-limit-bound backfill into one bound by minute-bar and news calls
+    instead. See ``warrior_screener.scanner.Enricher``.
     """
     if start > end:
         raise ValueError("start date must not be after end date")
+
+    tradingview_snapshot = _maybe_fetch_snapshot(settings)
+    logger.info(
+        "Backfill %s to %s: TradingView reference snapshot has %d tickers%s",
+        start,
+        end,
+        len(tradingview_snapshot),
+        "" if tradingview_snapshot else " (unavailable; using per-ticker lookups throughout)",
+    )
 
     outcomes: list[CollectionOutcome] = []
     cursor = start
@@ -160,7 +215,16 @@ def backfill(
             cursor += timedelta(days=1)
             continue
         try:
-            outcomes.append(collect_day(settings, provider, archive, cursor, force=force))
+            outcomes.append(
+                collect_day(
+                    settings,
+                    provider,
+                    archive,
+                    cursor,
+                    force=force,
+                    tradingview_snapshot=tradingview_snapshot,
+                )
+            )
         except ProviderError as exc:
             logger.exception("Collection failed for %s", cursor)
             archive.record_run({"trade_date": cursor, "status": "failed", "error": str(exc)})

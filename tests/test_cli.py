@@ -14,7 +14,11 @@ from warrior_screener import cli
 def cli_env(tmp_path, provider, monkeypatch):
     """Point the CLI at a temp archive and the fake provider."""
     config = tmp_path / "criteria.yml"
-    config.write_text("criteria:\n  min_price: 1.0\n", encoding="utf-8")
+    # use_tradingview_reference defaults on, which would otherwise make
+    # collect/backfill hit the real, live TradingView endpoint on every test run.
+    config.write_text(
+        "use_tradingview_reference: false\ncriteria:\n  min_price: 1.0\n", encoding="utf-8"
+    )
     monkeypatch.setattr(cli, "_make_provider", lambda settings: provider)
     monkeypatch.setenv("POLYGON_API_KEY", "test-key")
     return ["--config", str(config), "--data-dir", str(tmp_path / "data")]

@@ -140,6 +140,7 @@ class Enricher:
         settings: Settings,
         *,
         news_cache: dict[str, tuple[int, str | None]] | None = None,
+        snapshot: dict[str, Any] | None = None,
     ) -> None:
         """``provider=None`` puts the enricher in cache-only mode: it answers
         from the on-disk reference cache and never makes a request, which is how
@@ -147,19 +148,39 @@ class Enricher:
 
         ``news_cache`` supplies headline counts recorded by an earlier online
         scan, so an offline rescan can still evaluate the catalyst criterion.
+
+        ``snapshot`` is a ticker-keyed dict of TradingView
+        ``MarketSnapshotRow`` (see ``warrior_screener.providers.tradingview``),
+        fetched once for free with no API key. When a ticker appears in it,
+        that reference data is used instead of a Polygon lookup -- exchange,
+        security type and share count change rarely enough that TradingView's
+        *current* view is a reasonable proxy for a historical date, and this
+        is normally the largest single cut to a backfill's API-call budget
+        (up to ``max_enrich`` Polygon calls a day, down to zero for any ticker
+        still listed). A ticker missing from the snapshot -- typically because
+        it has since been delisted -- falls back to the historical provider
+        exactly as before, so the archive's delisted-ticker coverage is
+        unaffected.
         """
         self._provider = provider
         self._archive = archive
         self._settings = settings
         self._news_cache = news_cache or {}
+        self._snapshot = snapshot or {}
         self._cache = archive.load_reference_cache()
         self._float_overrides = load_float_overrides(archive.reference_dir / "float_overrides.csv")
         self._api_calls = 0
+        self._snapshot_hits = 0
 
     @property
     def api_calls(self) -> int:
         """Number of provider requests this enricher has issued."""
         return self._api_calls
+
+    @property
+    def snapshot_hits(self) -> int:
+        """Reference lookups answered from the TradingView snapshot instead."""
+        return self._snapshot_hits
 
     def enrich(self, candidate: Candidate, criteria: Criteria) -> None:
         """Fill in reference and catalyst fields on ``candidate`` in place."""
@@ -178,10 +199,19 @@ class Enricher:
             self._attach_news(candidate)
 
     def _reference(self, ticker: str, trade_date: date) -> TickerReference | None:
-        """Return reference data, using the TTL-bounded on-disk cache."""
+        """Return reference data: on-disk cache, then TradingView, then the
+        historical provider -- in that order, cheapest first."""
         cached = self._cache.get(ticker)
         if cached and _cache_is_fresh(cached, trade_date, self._settings.reference_cache_days):
             return _reference_from_cache(cached)
+
+        snapshot_row = self._snapshot.get(ticker)
+        if snapshot_row is not None:
+            from warrior_screener.providers.tradingview import to_ticker_reference
+
+            self._snapshot_hits += 1
+            return self._remember(to_ticker_reference(snapshot_row, as_of=trade_date), trade_date)
+
         if self._provider is None:
             return _reference_from_cache(cached) if cached else None
 
@@ -193,8 +223,9 @@ class Enricher:
             return _reference_from_cache(cached) if cached else None
 
         if reference is None:
-            # Delisted or unknown to the provider. Cache the miss so a backfill
-            # does not re-request it for every session in the range.
+            # Delisted or unknown to the provider (and not in the snapshot
+            # either). Cache the miss so a backfill does not re-request it for
+            # every session in the range.
             self._cache[ticker] = {
                 "ticker": ticker,
                 "missing": True,
@@ -202,7 +233,11 @@ class Enricher:
             }
             return None
 
-        self._cache[ticker] = {
+        return self._remember(reference, trade_date)
+
+    def _remember(self, reference: TickerReference, trade_date: date) -> TickerReference:
+        """Cache a resolved reference (from either source) and log it."""
+        self._cache[reference.ticker] = {
             "ticker": reference.ticker,
             "name": reference.name,
             "security_type": reference.security_type,
@@ -485,6 +520,7 @@ def run_scan(
         "in_play": len(in_play),
         "relaxed_in_play": sum(1 for c in in_play if c.qualification == "relaxed"),
         "enrichment_api_calls": enricher.api_calls if enricher else 0,
+        "enrichment_snapshot_hits": enricher.snapshot_hits if enricher else 0,
     }
     logger.info("Scan %s: %s", trade_date, stats)
     return ScanResult(

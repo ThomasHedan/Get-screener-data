@@ -34,9 +34,13 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
+from datetime import date
+from typing import TYPE_CHECKING, Any
 
 import requests
+
+if TYPE_CHECKING:
+    from warrior_screener.models import TickerReference
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +61,12 @@ EXCHANGE_TO_MIC = {"NASDAQ": "XNAS", "NYSE": "XNYS", "AMEX": "XASE"}
 # ticker-suffix heuristic (warrior_screener.scanner._passes_ticker_hygiene),
 # so there is no equivalent heuristic to replicate on this path.
 TRADEABLE_TYPES = frozenset({"stock", "dr"})  # common stock, depositary receipts
+
+# TradingView's type vocabulary mapped to the "CS"/"ADRC" codes the rest of
+# this codebase uses (Polygon's convention, since the archived pipeline was
+# built around it -- see EXCHANGE_TO_MIC above for the same reasoning applied
+# to exchanges).
+SECURITY_TYPE_TO_POLYGON = {"stock": "CS", "dr": "ADRC"}
 
 # One page comfortably clears the whole US market (~11k names) as of 2026;
 # paging defends against the universe growing past a single request rather
@@ -242,3 +252,32 @@ def _parse_row(entry: dict[str, Any]) -> MarketSnapshotRow:
 
 def _opt_float(value: Any) -> float | None:
     return float(value) if value is not None else None
+
+
+def to_ticker_reference(row: MarketSnapshotRow, *, as_of: date) -> TickerReference:
+    """Adapt a live snapshot row into a :class:`TickerReference`.
+
+    Lets :class:`warrior_screener.scanner.Enricher` use a TradingView snapshot
+    as a reference-lookup source interchangeably with a Polygon
+    ``ticker_details`` call. The values are TradingView's *current*
+    classification applied to a possibly historical ``as_of`` date -- a proxy,
+    same as the shares-outstanding-for-float proxy already documented in the
+    README, and for the same reason: exchange, security type and share count
+    change rarely enough that "current" is a reasonable stand-in for "as of
+    last month" for a ticker still trading today. It is not a stand-in for a
+    ticker that has since been delisted -- those never appear in a snapshot at
+    all, so the caller falls back to the historical provider for them.
+    """
+    from warrior_screener.models import TickerReference
+
+    return TickerReference(
+        ticker=row.ticker,
+        name=None,
+        security_type=SECURITY_TYPE_TO_POLYGON.get(row.security_type),
+        primary_exchange=row.exchange,
+        shares_outstanding=int(row.float_shares) if row.float_shares else None,
+        market_cap=row.market_cap,
+        is_active=True,  # it appeared in a live snapshot, so it is currently listed
+        list_date=None,
+        as_of=as_of,
+    )

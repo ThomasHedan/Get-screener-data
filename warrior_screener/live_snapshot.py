@@ -24,7 +24,11 @@ from typing import TYPE_CHECKING
 
 from warrior_screener.config import Criteria
 from warrior_screener.models import Candidate
-from warrior_screener.providers.tradingview import MarketSnapshotRow, fetch_market_snapshot
+from warrior_screener.providers.tradingview import (
+    SECURITY_TYPE_TO_POLYGON,
+    MarketSnapshotRow,
+    fetch_market_snapshot,
+)
 from warrior_screener.scanner import evaluate, score_candidates, select_in_play
 
 if TYPE_CHECKING:
@@ -73,7 +77,7 @@ def candidates_from_snapshot(
             avg_volume=_round(row.average_volume, 1),
             relative_volume=_round(row.relative_volume),
             dollar_volume=_round(row.close * row.volume, 0),
-            security_type="CS" if row.security_type == "stock" else "ADRC",
+            security_type=SECURITY_TYPE_TO_POLYGON.get(row.security_type),
             primary_exchange=row.exchange,
             float_shares=int(row.float_shares) if row.float_shares else None,
             shares_outstanding=int(row.float_shares) if row.float_shares else None,

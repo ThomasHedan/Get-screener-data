@@ -10,10 +10,22 @@ data_dir: data
 
 # Cost control. Each enriched candidate costs one reference lookup and (if it is
 # still in the running) one news lookup. On Polygon's free tier (5 req/min) a
-# session with max_enrich: 40 takes roughly 15-25 minutes.
+# session with max_enrich: 40 takes roughly 15-25 minutes -- unless
+# use_tradingview_reference (below) is answering most of those reference
+# lookups for free, which is normally the case.
 max_enrich: 40
 requests_per_minute: 5
 reference_cache_days: 30
+
+# Answer reference lookups (exchange, security type, share count) from
+# TradingView's free, keyless, single-request market snapshot before ever
+# calling Polygon -- normally the single biggest cut to a backfill's runtime,
+# with no extra setup required. Falls back to Polygon automatically for any
+# ticker the snapshot doesn't carry (typically because it has since been
+# delisted) or if the snapshot endpoint is unreachable. See the README
+# ("Live check: snapshot") for the trade-off: it applies TradingView's
+# *current* classification to a possibly historical date.
+use_tradingview_reference: true
 
 # Re-fetch the previous session when its cached copy is older than this many
 # days, so the previous close is split-adjusted consistently with today's bars.

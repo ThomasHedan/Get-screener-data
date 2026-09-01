@@ -110,6 +110,16 @@ class Settings:
     # for every backfilled day would burn the whole rate-limit budget.
     reference_cache_days: int = 30
 
+    # Prefer TradingView's free, keyless, single-request market snapshot for
+    # reference lookups (exchange, security type, share count) over Polygon's
+    # per-ticker call, falling back to Polygon only for tickers the snapshot
+    # does not carry (typically because they have since been delisted). This
+    # is normally the single biggest cut to a backfill's API-call budget and
+    # needs no extra setup, so it defaults on; see warrior_screener.scanner
+    # .Enricher and warrior_screener.providers.tradingview for the trade-off
+    # (TradingView's *current* classification applied to a historical date).
+    use_tradingview_reference: bool = True
+
     # Re-fetch the previous session when its cached copy is older than this,
     # so the previous close is split-adjusted consistently with today's bars.
     refresh_previous_after_days: float = 1.0
