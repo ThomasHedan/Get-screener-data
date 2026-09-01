@@ -59,21 +59,60 @@ not to.** Set `fill_to_min: false` (or `--strict-only`) to switch padding off.
 
 ---
 
-## Quick start
+## Setup
+
+Requires **Python 3.10+**. Check with `python3 --version` (macOS/Linux) or
+`python --version` (Windows).
+
+### 1. Get the code and a virtualenv
 
 ```bash
-pip install -r requirements.txt
-export POLYGON_API_KEY=...                    # https://polygon.io
+git clone https://github.com/ThomasHedan/Get-screener-data.git
+cd Get-screener-data
 
-python -m warrior_screener collect            # screen today, archive everything
-python -m warrior_screener show               # print today's in-play list
-python -m warrior_screener status             # archive coverage
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+
+pip install -e .                   # gives you the `warrior-screener` command
 ```
 
-Build history immediately instead of waiting a year for it:
+`pip install -r requirements.txt` works too if you would rather run it as
+`python -m warrior_screener`. Either way the only dependencies are `requests`
+and `PyYAML`.
+
+### 2. Add your API key
+
+Get a free key at [polygon.io](https://polygon.io/dashboard/signup), then create
+a `.env` file in the repository root:
 
 ```bash
-python -m warrior_screener backfill --start 2025-01-02 --end 2026-08-31
+echo 'POLYGON_API_KEY=your_key_here' > .env
+```
+
+`.env` is gitignored. For an interactive shell, export it instead:
+
+```bash
+export POLYGON_API_KEY=your_key_here          # Windows PowerShell: $env:POLYGON_API_KEY="..."
+```
+
+### 3. Check it works
+
+```bash
+warrior-screener collect --date yesterday
+```
+
+That screens one session and prints the in-play table. If it prints an HTTP 401,
+the key is wrong; if it reports `market_closed`, pick a weekday.
+
+> **Run commands from the repository root.** The config file and `data/`
+> directory are resolved relative to your working directory. If `config/criteria.yml`
+> is not found the screener warns and falls back to built-in defaults, so you
+> will not silently screen on criteria you thought you had edited.
+
+### 4. Build some history
+
+```bash
+warrior-screener backfill --start 2025-01-02 --end 2026-08-31
 ```
 
 Backfill walks oldest-first so each day's RVOL window is already cached when the
@@ -81,17 +120,67 @@ next day needs it, and a failed session is logged and skipped rather than
 aborting the range. Re-running is idempotent: archived sessions are skipped
 unless you pass `--force`.
 
-### Run it every day
+**Budget the time before you start it.** On the free tier (5 requests/minute) a
+session takes roughly 15-25 minutes, so a year of history is a multi-day run.
+Start with a month to confirm the output looks right. It is safe to interrupt
+with Ctrl-C and resume — completed sessions are skipped on the next run.
+
+### 5. Everyday commands
+
+```bash
+warrior-screener collect      # screen today, archive everything
+warrior-screener show         # print today's in-play list
+warrior-screener status       # archive coverage, and gaps
+```
+
+---
+
+## Running it every day
+
+The archive is only useful if it is actually written every session, so schedule it.
+
+### macOS / Linux (cron)
+
+`crontab -e`, then:
 
 ```cron
 CRON_TZ=America/New_York
-15 17 * * 1-5 /path/to/repo/scripts/run_daily.sh >> /path/to/repo/logs/cron.log 2>&1
+15 17 * * 1-5 /full/path/to/Get-screener-data/scripts/run_daily.sh >> /full/path/to/Get-screener-data/logs/cron.log 2>&1
 ```
 
+`mkdir logs` first. The script cd's to the repository itself, sources `.env`, and
+exits non-zero on failure so cron will tell you when something breaks. It uses
+whichever `python3` is on cron's PATH — to pin the virtualenv, set
+`PYTHON=/full/path/to/Get-screener-data/.venv/bin/python3` in `.env`.
+
+On macOS, cron needs Full Disk Access (System Settings → Privacy & Security) to
+write outside its own directory, and a sleeping laptop will not run the job. If
+your machine is not reliably awake at 17:15 ET, use `launchd` with
+`StartCalendarInterval`, which catches up on missed runs after a wake.
+
+### Windows (Task Scheduler)
+
+`scripts/run_daily.sh` is bash. Either run it under WSL, or create a Basic Task
+that runs weekdays and points at:
+
+```
+Program:   C:\path\to\Get-screener-data\.venv\Scripts\python.exe
+Arguments: -m warrior_screener collect
+Start in:  C:\path\to\Get-screener-data
+```
+
+Set `POLYGON_API_KEY` as a user environment variable, since Task Scheduler will
+not read `.env`.
+
+### What time to run
+
 17:15 ET is ~75 minutes after the close, by which point consolidated volume has
-settled. On Polygon's free tier same-day data may not be published until the
-next morning — if `collect` finds nothing, run it the following morning with
-`--date yesterday`.
+settled. **On the free tier same-day data may not be published until the next
+morning** — if `collect` returns nothing useful, move the job to the following
+morning and use `--date yesterday`.
+
+Whatever you choose, check `data/runs.jsonl` occasionally: one line per run, so
+a gap in the archive is visible rather than silent.
 
 ---
 
@@ -237,7 +326,7 @@ never silently run a different screen than you think.
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest          # 115 tests, no network and no API key required
+python -m pytest          # 116 tests, no network and no API key required
 python -m ruff check .
 python -m ruff format .
 ```

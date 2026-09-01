@@ -180,6 +180,16 @@ def load_settings(
         logger.debug("Loaded configuration from %s", path)
     elif config_path is not None:
         raise FileNotFoundError(f"Config file not found: {path}")
+    else:
+        # Paths are relative to the working directory, so running from outside
+        # the repo silently ignores an edited criteria file. Say so rather than
+        # screening on defaults the user thinks they changed.
+        logger.warning(
+            "No %s relative to %s -- screening with built-in defaults. "
+            "Run from the repository root, or pass --config.",
+            path,
+            Path.cwd(),
+        )
 
     env_key = os.environ.get("POLYGON_API_KEY") or os.environ.get("SCREENER_API_KEY")
     if env_key:

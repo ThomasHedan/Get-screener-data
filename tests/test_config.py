@@ -52,6 +52,15 @@ class TestLoading:
     def test_untouched_keys_keep_their_defaults(self, config_file):
         assert load_settings(config_file).criteria.min_relative_volume == 5.0
 
+    def test_missing_default_config_warns_instead_of_failing_silently(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        monkeypatch.chdir(tmp_path)  # no config/criteria.yml here
+        with caplog.at_level("WARNING"):
+            settings = load_settings()
+        assert settings.criteria.min_price == 1.0  # fell back to defaults
+        assert "built-in defaults" in caplog.text
+
     def test_missing_explicit_config_is_an_error(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             load_settings(tmp_path / "nope.yml")
