@@ -73,8 +73,21 @@ cd Get-screener-data
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 
+pip install --upgrade pip          # editable installs need pip >= 21.3
 pip install -e .                   # gives you the `warrior-screener` command
 ```
+
+> **`error: ... missing the 'build_editable' hook`?** Your venv's `pip` (or
+> `setuptools`) predates [PEP 660](https://peps.python.org/pep-0660/). Either run
+> `pip install --upgrade pip setuptools` and retry `pip install -e .`, or skip
+> the editable install entirely:
+> ```bash
+> pip install -r requirements.txt
+> python -m warrior_screener collect --date yesterday   # instead of warrior-screener ...
+> ```
+> `python -m warrior_screener` is the same tool with no build step at all — use
+> it in place of the `warrior-screener` command in every example below if you
+> go this route.
 
 `pip install -r requirements.txt` works too if you would rather run it as
 `python -m warrior_screener`. Either way the only dependencies are `requests`
