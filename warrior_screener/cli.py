@@ -366,19 +366,25 @@ def _print_rows(rows: list[dict[str, Any]]) -> None:
 
     Rows arrive either as ``Candidate`` dicts (typed) or straight from a CSV
     (all strings), so cells are coerced rather than formatted per source.
+    Columns are joined with an explicit space rather than relying on ``width``
+    alone -- TradingView's time-of-day-normalized RVOL (see the `snapshot`
+    command) can print 4-5 digit values that overflow a narrow column, and
+    without a guaranteed separator that number silently glues onto the next
+    one (observed live: "13,321.90123,119,671" reads as one number but is
+    RVOL and VOLUME concatenated).
     """
-    header = "".join(label.ljust(width) for _, label, width, _kind in _COLUMNS)
+    header = " ".join(label.ljust(width) for _, label, width, _kind in _COLUMNS)
     print(header)
     print("-" * len(header))
     for row in rows:
-        line = ""
+        cells = []
         for key, _label, width, kind in _COLUMNS:
             value = row.get(key)
             # "0 headlines" and "we never looked" must not print the same.
             if key == "news_count" and not _is_true(row.get("news_checked")):
                 value = None
-            line += _format_cell(value, kind).ljust(width)
-        print(line)
+            cells.append(_format_cell(value, kind).ljust(width))
+        print(" ".join(cells))
 
 
 def _is_true(value: Any) -> bool:
