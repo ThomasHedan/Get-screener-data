@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from datetime import date
 
 import pytest
 
@@ -61,3 +62,33 @@ class TestSnapshotCommand:
         cli.main(cli_env + ["snapshot", "--min-change", "50"])
         # GAPR is only +40%, so raising the bar to 50% should drop it too.
         assert "GAPR" not in capsys.readouterr().out
+
+
+class TestStaleDataWarning:
+    """Regression coverage for the exact case caught live on 2026-09-07
+    (Labor Day): `snapshot` silently presenting the prior session's numbers
+    with nothing on screen to say they were not from today."""
+
+    def test_warns_on_a_market_holiday(self, cli_env, capsys, monkeypatch):
+        monkeypatch.setattr("warrior_screener.cli.date", _FixedDate)
+        cli.main(cli_env + ["snapshot"])
+        out = capsys.readouterr().out
+        assert "not a US trading day" in out
+        assert "2026-09-07" in out
+
+    def test_no_warning_on_a_normal_trading_day(self, cli_env, capsys, monkeypatch):
+        monkeypatch.setattr("warrior_screener.cli.date", _fixed_date_class(date(2026, 9, 8)))
+        cli.main(cli_env + ["snapshot"])
+        assert "not a US trading day" not in capsys.readouterr().out
+
+
+def _fixed_date_class(fixed: date):
+    class _Fixed(date):
+        @classmethod
+        def today(cls):
+            return fixed
+
+    return _Fixed
+
+
+_FixedDate = _fixed_date_class(date(2026, 9, 7))  # Labor Day

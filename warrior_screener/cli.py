@@ -270,6 +270,7 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
     unless --save is given, and never touches Polygon or the API budget."""
     settings = _settings_from_args(args)
     from warrior_screener.live_snapshot import screen_live
+    from warrior_screener.market_calendar import is_trading_day
     from warrior_screener.providers.tradingview import TradingViewError
 
     try:
@@ -277,6 +278,17 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
     except TradingViewError as exc:
         logger.error("%s", exc)
         return 1
+
+    today = date.today()
+    if not is_trading_day(today):
+        # TradingView has no "market closed" signal of its own -- it always
+        # answers with the most recent session, which reads exactly like live
+        # data unless something says otherwise. Caught live: this command run
+        # on a market holiday silently presented the prior Friday's numbers.
+        print(
+            f"** {today.isoformat()} is not a US trading day (weekend or holiday) -- "
+            "the figures below are from the last session, not today. **\n"
+        )
 
     print(
         f"Live snapshot, {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')} "
