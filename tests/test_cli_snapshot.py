@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-from datetime import date
 
 import pytest
 
@@ -64,31 +63,45 @@ class TestSnapshotCommand:
         assert "GAPR" not in capsys.readouterr().out
 
 
-class TestStaleDataWarning:
-    """Regression coverage for the exact case caught live on 2026-09-07
-    (Labor Day): `snapshot` silently presenting the prior session's numbers
-    with nothing on screen to say they were not from today."""
+class TestSessionPhaseNotice:
+    """Regression coverage for two cases caught live in a row:
 
-    def test_warns_on_a_market_holiday(self, cli_env, capsys, monkeypatch):
-        monkeypatch.setattr("warrior_screener.cli.date", _FixedDate)
+    1. 2026-09-07 (Labor Day): `snapshot` silently presented the prior
+       session's numbers with nothing on screen to say they were not today's.
+    2. 2026-09-08, 04:52 ET (the next trading day): the holiday check alone
+       passed -- it *was* a trading day -- but pre-market had barely started,
+       so lower-volume names still showed the exact same stale numbers with,
+       again, no on-screen indication.
+
+    `_cmd_snapshot` calls `market_calendar.session_phase` via a local import,
+    so that is what these patch -- patching `cli.date` (the old mechanism)
+    no longer has any effect on it.
+    """
+
+    def test_closed_market_prints_a_warning(self, cli_env, capsys, monkeypatch):
+        monkeypatch.setattr("warrior_screener.market_calendar.session_phase", lambda *a: "closed")
+        cli.main(cli_env + ["snapshot"])
+        assert "Market closed" in capsys.readouterr().out
+
+    def test_premarket_prints_the_not_yet_traded_caveat(self, cli_env, capsys, monkeypatch):
+        monkeypatch.setattr(
+            "warrior_screener.market_calendar.session_phase", lambda *a: "pre-market"
+        )
         cli.main(cli_env + ["snapshot"])
         out = capsys.readouterr().out
-        assert "not a US trading day" in out
-        assert "2026-09-07" in out
+        assert "Pre-market" in out
+        assert "may still show yesterday's numbers" in out
 
-    def test_no_warning_on_a_normal_trading_day(self, cli_env, capsys, monkeypatch):
-        monkeypatch.setattr("warrior_screener.cli.date", _fixed_date_class(date(2026, 9, 8)))
+    def test_after_hours_prints_a_neutral_note(self, cli_env, capsys, monkeypatch):
+        monkeypatch.setattr(
+            "warrior_screener.market_calendar.session_phase", lambda *a: "after-hours"
+        )
         cli.main(cli_env + ["snapshot"])
-        assert "not a US trading day" not in capsys.readouterr().out
+        assert "After-hours" in capsys.readouterr().out
 
-
-def _fixed_date_class(fixed: date):
-    class _Fixed(date):
-        @classmethod
-        def today(cls):
-            return fixed
-
-    return _Fixed
-
-
-_FixedDate = _fixed_date_class(date(2026, 9, 7))  # Labor Day
+    def test_regular_session_prints_no_caveat_at_all(self, cli_env, capsys, monkeypatch):
+        monkeypatch.setattr("warrior_screener.market_calendar.session_phase", lambda *a: "regular")
+        cli.main(cli_env + ["snapshot"])
+        out = capsys.readouterr().out
+        for phrase in ("Market closed", "Pre-market", "After-hours"):
+            assert phrase not in out

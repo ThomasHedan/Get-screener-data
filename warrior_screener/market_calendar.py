@@ -22,7 +22,15 @@ practice for exactly this reason in lightweight tools.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
+
+EASTERN = ZoneInfo("America/New_York")
+
+PREMARKET_START = time(4, 0)
+REGULAR_OPEN = time(9, 30)
+REGULAR_CLOSE = time(16, 0)
+AFTERHOURS_END = time(20, 0)
 
 # Full-day NYSE/Nasdaq closures only. Early-close days (day after
 # Thanksgiving, Christmas Eve) are deliberately excluded -- the market trades
@@ -53,3 +61,28 @@ def is_trading_day(day: date) -> bool:
     year's actual holidays. Update the list before relying on this past 2026.
     """
     return day.weekday() < 5 and day not in US_MARKET_HOLIDAYS
+
+
+def session_phase(moment: datetime | None = None) -> str:
+    """Classify ``moment`` (default: now) into a US equity session phase.
+
+    Returns one of ``"closed"``, ``"pre-market"``, ``"regular"`` or
+    ``"after-hours"``. This exists for the same reason as ``is_trading_day``,
+    to catch a case that a plain weekend/holiday check does not: caught live
+    on 2026-09-08 at 04:52 ET, right after a holiday Monday -- a normal
+    trading day, so no holiday warning fired, but the previous session's
+    numbers were still identical, because pre-market for illiquid names had
+    barely started. "Is this a trading day" and "has trading actually
+    happened yet today" are different questions; this answers the second one.
+    """
+    now = (moment or datetime.now(EASTERN)).astimezone(EASTERN)
+    if not is_trading_day(now.date()):
+        return "closed"
+    current_time = now.time()
+    if current_time < PREMARKET_START or current_time >= AFTERHOURS_END:
+        return "closed"
+    if current_time < REGULAR_OPEN:
+        return "pre-market"
+    if current_time < REGULAR_CLOSE:
+        return "regular"
+    return "after-hours"

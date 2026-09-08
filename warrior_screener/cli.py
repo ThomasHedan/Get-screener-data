@@ -270,7 +270,7 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
     unless --save is given, and never touches Polygon or the API budget."""
     settings = _settings_from_args(args)
     from warrior_screener.live_snapshot import screen_live
-    from warrior_screener.market_calendar import is_trading_day
+    from warrior_screener.market_calendar import EASTERN, session_phase
     from warrior_screener.providers.tradingview import TradingViewError
 
     try:
@@ -279,15 +279,33 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
         logger.error("%s", exc)
         return 1
 
-    today = date.today()
-    if not is_trading_day(today):
-        # TradingView has no "market closed" signal of its own -- it always
-        # answers with the most recent session, which reads exactly like live
-        # data unless something says otherwise. Caught live: this command run
-        # on a market holiday silently presented the prior Friday's numbers.
+    # TradingView has no "market closed" or "no trades yet" signal of its
+    # own -- it always answers with the most recent session, which reads
+    # exactly like live data unless something says otherwise. Caught live
+    # twice: once run on a market holiday (silently showed Friday's numbers),
+    # then again at 04:52 ET the following trading day -- a real trading day,
+    # so that check passed, but pre-market had barely started and lower-
+    # volume names still showed the *same* stale numbers. "Is today a
+    # trading day" and "has trading actually happened yet" are different
+    # questions; session_phase answers the second one.
+    now_et = datetime.now(EASTERN)
+    phase = session_phase(now_et)
+    if phase == "closed":
         print(
-            f"** {today.isoformat()} is not a US trading day (weekend or holiday) -- "
-            "the figures below are from the last session, not today. **\n"
+            f"** Market closed ({now_et.strftime('%Y-%m-%d %H:%M %Z')}) -- the "
+            "figures below are from the last session, not today. **\n"
+        )
+    elif phase == "pre-market":
+        print(
+            f"** Pre-market ({now_et.strftime('%H:%M %Z')}, regular open is 09:30 "
+            "ET) -- lower-volume names below may still show yesterday's numbers "
+            "until they actually trade today. **\n"
+        )
+    elif phase == "after-hours":
+        print(
+            f"** After-hours ({now_et.strftime('%H:%M %Z')}, regular close was "
+            "16:00 ET) -- figures include today's regular session plus "
+            "after-hours activity. **\n"
         )
 
     print(
