@@ -1,79 +1,59 @@
 """Command line entry point.
 
-python -m warrior_screener collect                 # today's in-play names
-python -m warrior_screener backfill --start 2026-06-01 --end 2026-08-31
-python -m warrior_screener rescan --date 2026-08-28 --max-float 20000000
-python -m warrior_screener show --date 2026-08-28
-python -m warrior_screener status
+python -m warrior_screener snapshot                      # what's in play right now
+python -m warrior_screener snapshot --no-news            # structural qualifiers only
+python -m warrior_screener snapshot --json data/today.json   # feed the dashboard
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
-from datetime import date, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from warrior_screener import collector
+from warrior_screener import market_calendar
 from warrior_screener.config import Settings, load_settings
-from warrior_screener.history import load_history
-from warrior_screener.providers.base import MarketDataProvider, ProviderError
-from warrior_screener.providers.polygon import PolygonProvider
-from warrior_screener.scanner import Enricher, run_scan
-from warrior_screener.storage import Archive
+from warrior_screener.providers.tradingview import TradingViewError
 
 logger = logging.getLogger("warrior_screener")
+
+DEFAULT_JSON_PATH = Path("data/today.json")
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Define the CLI surface."""
     parser = argparse.ArgumentParser(
         prog="warrior-screener",
-        description=(
-            "Screen for Warrior-Trading-style in-play stocks and archive their intraday data."
-        ),
+        description="Screen the US market for Warrior-Trading-style in-play stocks, live.",
     )
     parser.add_argument(
         "--config", type=Path, help="Path to criteria YAML (default config/criteria.yml)"
     )
-    parser.add_argument("--data-dir", type=Path, help="Archive root (default data/)")
-    parser.add_argument("--api-key", help="Provider API key (default $POLYGON_API_KEY)")
-    parser.add_argument("--rpm", type=int, help="Provider requests per minute budget")
+    parser.add_argument("--data-dir", type=Path, help="Output root (default data/)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    collect_cmd = subparsers.add_parser("collect", help="Screen one session and archive it")
-    collect_cmd.add_argument("--date", default="today", help="ISO date, 'today' or 'yesterday'")
-    collect_cmd.add_argument("--force", action="store_true", help="Re-collect an archived session")
-    collect_cmd.add_argument(
-        "--no-intraday", action="store_true", help="Skip minute-bar collection"
+    snapshot_cmd = subparsers.add_parser(
+        "snapshot",
+        help="Screen the live TradingView snapshot (no API key required)",
     )
-    _add_criteria_flags(collect_cmd)
-
-    backfill_cmd = subparsers.add_parser("backfill", help="Collect a range of sessions")
-    backfill_cmd.add_argument("--start", required=True, help="First session (ISO date)")
-    backfill_cmd.add_argument(
-        "--end", default="today", help="Last session (ISO date, default today)"
+    snapshot_cmd.add_argument(
+        "--json",
+        nargs="?",
+        const=str(DEFAULT_JSON_PATH),
+        metavar="PATH",
+        help=f"Also write the result as JSON (default {DEFAULT_JSON_PATH}) for the dashboard",
     )
-    backfill_cmd.add_argument("--force", action="store_true", help="Re-collect archived sessions")
-    backfill_cmd.add_argument(
-        "--no-intraday", action="store_true", help="Skip minute-bar collection"
+    snapshot_cmd.add_argument(
+        "--quiet", action="store_true", help="Write the JSON without printing the table"
     )
-    _add_criteria_flags(backfill_cmd)
+    _add_criteria_flags(snapshot_cmd)
 
-    rescan_cmd = subparsers.add_parser(
-        "rescan", help="Re-run the screen offline from cached bars (no API calls, nothing written)"
-    )
-    rescan_cmd.add_argument("--date", default="today", help="ISO date, 'today' or 'yesterday'")
-    _add_criteria_flags(rescan_cmd)
-
-    show_cmd = subparsers.add_parser("show", help="Print an archived in-play list")
-    show_cmd.add_argument("--date", default="today", help="ISO date, 'today' or 'yesterday'")
-
-    subparsers.add_parser("status", help="Summarise archive coverage")
     return parser
 
 
@@ -121,141 +101,142 @@ def _settings_from_args(args: argparse.Namespace) -> Settings:
     """Assemble settings from the config file, environment and CLI flags."""
     overrides: dict[str, Any] = {
         "data_dir": args.data_dir,
-        "api_key": args.api_key,
-        "requests_per_minute": args.rpm,
         "criteria": _criteria_overrides(args),
     }
-    if getattr(args, "no_intraday", False):
-        overrides["collect_intraday"] = False
     return load_settings(args.config, overrides=overrides)
-
-
-def _resolve_date(text: str) -> date:
-    """Parse ``today``, ``yesterday`` or an ISO date."""
-    normalised = text.strip().lower()
-    if normalised == "today":
-        return date.today()
-    if normalised == "yesterday":
-        return date.today() - timedelta(days=1)
-    try:
-        return date.fromisoformat(normalised)
-    except ValueError as exc:
-        raise SystemExit(f"Invalid date {text!r}; use YYYY-MM-DD, 'today' or 'yesterday'") from exc
-
-
-def _make_provider(settings: Settings) -> MarketDataProvider:
-    """Instantiate the configured market data provider."""
-    if settings.provider != "polygon":
-        raise SystemExit(
-            f"Unknown provider {settings.provider!r}. Only 'polygon' ships today; "
-            f"add a class implementing MarketDataProvider to use another vendor."
-        )
-    return PolygonProvider(
-        settings.api_key,
-        requests_per_minute=settings.requests_per_minute,
-        max_retries=settings.max_retries,
-        timeout=settings.request_timeout,
-    )
 
 
 # ------------------------------------------------------------------ Commands
 
 
-def _cmd_collect(args: argparse.Namespace) -> int:
+def _cmd_snapshot(args: argparse.Namespace) -> int:
+    """Screen the live TradingView snapshot: print it, write JSON, or both."""
     settings = _settings_from_args(args)
-    archive = Archive(settings.data_dir)
-    outcome = collector.collect_day(
-        settings, _make_provider(settings), archive, _resolve_date(args.date), force=args.force
-    )
-    print(f"{outcome.trade_date}: {outcome.status} ({outcome.in_play} in play)")
-    if outcome.status == "collected":
-        _print_in_play(archive, outcome.trade_date)
-    return 0
+    from warrior_screener.live_snapshot import screen_live
 
-
-def _cmd_backfill(args: argparse.Namespace) -> int:
-    settings = _settings_from_args(args)
-    archive = Archive(settings.data_dir)
-    outcomes = collector.backfill(
-        settings,
-        _make_provider(settings),
-        archive,
-        _resolve_date(args.start),
-        _resolve_date(args.end),
-        force=args.force,
-    )
-    collected = sum(1 for o in outcomes if o.status == "collected")
-    failed = [o for o in outcomes if o.status == "failed"]
-    print(f"Backfill finished: {collected} sessions collected, {len(failed)} failed")
-    for outcome in failed:
-        print(f"  FAILED {outcome.trade_date}: {outcome.detail}")
-    return 1 if failed else 0
-
-
-def _cmd_rescan(args: argparse.Namespace) -> int:
-    """Re-run the screen against cached data only, printing without writing."""
-    settings = _settings_from_args(args)
-    archive = Archive(settings.data_dir)
-    trade_date = _resolve_date(args.date)
-
-    bars = archive.read_daily_bars(trade_date)
-    if not bars:
-        print(f"No cached daily bars for {trade_date}. Run `collect --date {trade_date}` first.")
+    try:
+        result = screen_live(settings.criteria)
+    except TradingViewError as exc:
+        logger.error("%s", exc)
         return 1
 
-    history = load_history(
-        None, archive, trade_date, settings.criteria.rvol_lookback_days, allow_fetch=False
-    )
-    enricher = Enricher(None, archive, settings, news_cache=_archived_news(archive, trade_date))
-    result = run_scan(bars, history, settings, enricher, trade_date)
-    _print_candidates(result.in_play)
-    print(f"\n(offline rescan of {trade_date}; nothing was written)")
+    now_et = datetime.now(market_calendar.EASTERN)
+    phase = market_calendar.session_phase(now_et)
+    notice = _staleness_notice(now_et, phase)
+
+    if not args.quiet:
+        if notice:
+            print(f"** {notice} **\n")
+        print(
+            f"Live snapshot, {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')} "
+            f"({result.stats['universe_rows']} tickers scanned)"
+        )
+        _print_candidates(result.in_play)
+        print(
+            "\n(TradingView relative volume is time-of-day normalized and no free "
+            "news source backs this path, so every row is 'relaxed' unless\n"
+            " --no-news is passed -- see the README.)"
+        )
+
+    if args.json is not None:
+        path = _write_json(Path(args.json), result, now_et, phase, notice, settings)
+        print(f"Wrote {path}")
     return 0
 
 
-def _archived_news(archive: Archive, trade_date: date) -> dict[str, tuple[int, str | None]]:
-    """Recover headline counts from a previous online scan of the same session.
+def _staleness_notice(now_et: datetime, phase: str) -> str | None:
+    """The warning that belongs on this result, or None when it is live.
 
-    Without this an offline rescan cannot judge the catalyst criterion at all,
-    and every candidate would come back tagged ``news_unknown``.
+    TradingView has no "market closed" or "no trades yet" signal of its own --
+    it always answers with the most recent session, which reads exactly like
+    live data unless something says otherwise. Caught live twice: once run on a
+    market holiday (silently showed Friday's numbers), then again at 04:52 ET
+    the following trading day -- a real trading day, so that check passed, but
+    pre-market had barely started and lower-volume names still showed the
+    *same* stale numbers. "Is today a trading day" and "has trading actually
+    happened yet" are different questions; session_phase answers the second.
+
+    This matters more now than it did as a terminal warning: the dashboard is
+    refreshed two hours before the open, squarely inside the pre-market case,
+    so the notice travels into the JSON and onto the page.
     """
-    news: dict[str, tuple[int, str | None]] = {}
-    for row in archive.read_candidates(trade_date):
-        if row.get("news_checked", "").strip().lower() not in ("true", "1"):
-            continue
-        try:
-            count = int(row.get("news_count") or 0)
-        except ValueError:
-            continue
-        news[row["ticker"]] = (count, row.get("news_headline") or None)
-    return news
+    stamp = now_et.strftime("%H:%M %Z")
+    if phase == "closed":
+        return (
+            f"Market closed ({now_et.strftime('%Y-%m-%d %H:%M %Z')}) -- these figures "
+            "are from the last session, not today."
+        )
+    if phase == "pre-market":
+        return (
+            f"Pre-market ({stamp}, regular open is 09:30 ET) -- lower-volume names may "
+            "still show yesterday's numbers until they actually trade today."
+        )
+    if phase == "after-hours":
+        return (
+            f"After-hours ({stamp}, regular close was 16:00 ET) -- figures include "
+            "today's regular session plus after-hours activity."
+        )
+    return None
 
 
-def _cmd_show(args: argparse.Namespace) -> int:
-    settings = _settings_from_args(args)
-    archive = Archive(settings.data_dir)
-    trade_date = _resolve_date(args.date)
-    rows = archive.read_in_play(trade_date)
-    if not rows:
-        print(f"No archived in-play list for {trade_date}")
-        return 1
-    _print_rows(rows)
-    return 0
+def _write_json(
+    path: Path,
+    result: Any,
+    now_et: datetime,
+    phase: str,
+    notice: str | None,
+    settings: Settings,
+) -> Path:
+    """Serialise a scan for the dashboard, staleness and criteria included.
+
+    The page is a static read of this file, so anything it needs to render an
+    honest screen has to be in here -- including *when* this ran and whether
+    the market was open at the time. A dashboard that cannot tell a live board
+    from yesterday's leftovers is worse than no dashboard.
+    """
+    criteria = settings.criteria
+    payload = {
+        "generated_at": now_et.isoformat(timespec="seconds"),
+        "trade_date": result.trade_date.isoformat(),
+        "session_phase": phase,
+        "notice": notice,
+        "stats": result.stats,
+        "criteria": {
+            "min_change_pct": criteria.min_change_pct,
+            "min_price": criteria.min_price,
+            "max_price": criteria.max_price,
+            "min_relative_volume": criteria.min_relative_volume,
+            "max_float_shares": criteria.max_float_shares,
+            "min_day_volume": criteria.min_day_volume,
+            "require_news_catalyst": criteria.require_news_catalyst,
+        },
+        "in_play": [_json_row(candidate) for candidate in result.in_play],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
 
 
-def _cmd_status(args: argparse.Namespace) -> int:
-    settings = _settings_from_args(args)
-    archive = Archive(settings.data_dir)
-    dates = archive.collected_dates()
-    if not dates:
-        print(f"Archive at {archive.root} is empty. Start with `collect` or `backfill`.")
-        return 0
-    total_rows = sum(len(archive.read_in_play(day)) for day in dates)
-    print(f"Archive: {archive.root}")
-    print(f"Sessions collected: {len(dates)}  ({dates[0]} -> {dates[-1]})")
-    print(f"In-play rows:       {total_rows}  (avg {total_rows / len(dates):.1f} per session)")
-    print(f"History file:       {archive.in_play_history_path}")
-    return 0
+def _json_row(candidate: Any) -> dict[str, Any]:
+    """One in-play name, flattened to the fields the dashboard renders."""
+    return {
+        "ticker": candidate.ticker,
+        "close": candidate.close,
+        "change_pct": candidate.change_pct,
+        "gap_pct": candidate.gap_pct,
+        "relative_volume": candidate.relative_volume,
+        "volume": candidate.volume,
+        "avg_volume": candidate.avg_volume,
+        "float_shares": candidate.float_shares,
+        "market_cap": candidate.market_cap,
+        "primary_exchange": candidate.primary_exchange,
+        "score": candidate.score,
+        "qualification": candidate.qualification,
+        "rejected_by": list(candidate.rejected_by),
+        # False means nothing checked for news, not that there is no catalyst.
+        "news_checked": candidate.news_checked,
+        "news_count": candidate.news_count,
+    }
 
 
 # ------------------------------------------------------------------ Printing
@@ -275,12 +256,6 @@ _COLUMNS = (
 )
 
 
-def _print_in_play(archive: Archive, trade_date: date) -> None:
-    rows = archive.read_in_play(trade_date)
-    if rows:
-        _print_rows(rows)
-
-
 def _print_candidates(candidates: Any) -> None:
     _print_rows([candidate.to_row() for candidate in candidates])
 
@@ -288,21 +263,25 @@ def _print_candidates(candidates: Any) -> None:
 def _print_rows(rows: list[dict[str, Any]]) -> None:
     """Print an in-play table to stdout.
 
-    Rows arrive either as ``Candidate`` dicts (typed) or straight from a CSV
-    (all strings), so cells are coerced rather than formatted per source.
+    Columns are joined with an explicit space rather than relying on ``width``
+    alone -- TradingView's time-of-day-normalized RVOL can print 4-5 digit
+    values that overflow a narrow column, and without a guaranteed separator
+    that number silently glues onto the next one (observed live:
+    "13,321.90123,119,671" reads as one number but is RVOL and VOLUME
+    concatenated).
     """
-    header = "".join(label.ljust(width) for _, label, width, _kind in _COLUMNS)
+    header = " ".join(label.ljust(width) for _, label, width, _kind in _COLUMNS)
     print(header)
     print("-" * len(header))
     for row in rows:
-        line = ""
+        cells = []
         for key, _label, width, kind in _COLUMNS:
             value = row.get(key)
             # "0 headlines" and "we never looked" must not print the same.
             if key == "news_count" and not _is_true(row.get("news_checked")):
                 value = None
-            line += _format_cell(value, kind).ljust(width)
-        print(line)
+            cells.append(_format_cell(value, kind).ljust(width))
+        print(" ".join(cells))
 
 
 def _is_true(value: Any) -> bool:
@@ -328,11 +307,7 @@ def _format_cell(value: Any, kind: str = "text") -> str:
 
 
 _COMMANDS = {
-    "collect": _cmd_collect,
-    "backfill": _cmd_backfill,
-    "rescan": _cmd_rescan,
-    "show": _cmd_show,
-    "status": _cmd_status,
+    "snapshot": _cmd_snapshot,
 }
 
 
@@ -346,11 +321,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         return _COMMANDS[args.command](args)
-    except (ProviderError, ValueError, FileNotFoundError) as exc:
+    except (TradingViewError, ValueError, FileNotFoundError) as exc:
         logger.error("%s", exc)
         return 1
     except KeyboardInterrupt:
-        logger.warning("Interrupted; the archive is consistent up to the last completed session")
+        logger.warning("Interrupted")
         return 130
 
 

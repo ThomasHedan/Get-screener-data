@@ -12,8 +12,16 @@ venv/
 .env
 *.key
 
-# Collected market data (large, regenerable from the provider; keep it out of git
-# unless you deliberately want the archive versioned -- see README "Storage")
-# (`data/*` rather than `data/`, so the .gitkeep below can be re-included)
+# Scan output. data/today.json is the dashboard's only data source and is
+# committed on purpose -- the refresh workflow pushing it is what redeploys the
+# site, and the commit history doubles as the archive of past sessions.
 data/*
 !data/.gitkeep
+!data/today.json
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+next-env.d.ts
+.vercel

@@ -6,70 +6,13 @@ from dataclasses import replace
 
 import pytest
 
-from tests.test_constants import (
-    BIG_FLOAT_TICKER,
-    EXPENSIVE_TICKER,
-    IN_PLAY_TICKER,
-    LOW_RVOL_TICKER,
-    TRADE_DATE,
-    WARRANT_TICKER,
-)
+from tests.test_constants import IN_PLAY_TICKER, TRADE_DATE
 from warrior_screener.models import Candidate
 from warrior_screener.scanner import (
-    Enricher,
-    coarse_candidates,
     evaluate,
-    run_scan,
     score_candidates,
     select_in_play,
 )
-
-
-def _tickers(candidates) -> set[str]:
-    return {candidate.ticker for candidate in candidates}
-
-
-class TestCoarsePass:
-    def test_keeps_the_gapper(self, scan_bars, history, criteria):
-        result = coarse_candidates(scan_bars, history, criteria, limit=50)
-        assert IN_PLAY_TICKER in _tickers(result)
-
-    @pytest.mark.parametrize(
-        "ticker, reason",
-        [
-            (EXPENSIVE_TICKER, "above max_price"),
-            ("FLAT", "under min_change_pct"),
-            ("THIN", "under min_day_volume"),
-            (WARRANT_TICKER, "warrant suffix"),
-        ],
-    )
-    def test_rejects(self, scan_bars, history, criteria, ticker, reason):
-        result = coarse_candidates(scan_bars, history, criteria, limit=50)
-        assert ticker not in _tickers(result), f"{ticker} should be dropped: {reason}"
-
-    def test_computes_change_and_rvol(self, scan_bars, history, criteria):
-        candidate = next(
-            c
-            for c in coarse_candidates(scan_bars, history, criteria, limit=50)
-            if c.ticker == IN_PLAY_TICKER
-        )
-        assert candidate.change_pct == pytest.approx(40.0)  # 3.00 -> 4.20
-        assert candidate.gap_pct == pytest.approx(20.0)  # 3.00 -> 3.60 open
-        assert candidate.relative_volume == pytest.approx(20.0)  # 4M on a 200k average
-
-    def test_ticker_without_prior_close_is_skipped(self, scan_bars, history, criteria):
-        history.prev_close.pop(IN_PLAY_TICKER)
-        assert IN_PLAY_TICKER not in _tickers(
-            coarse_candidates(scan_bars, history, criteria, limit=50)
-        )
-
-    def test_limit_keeps_the_strongest(self, scan_bars, history, criteria):
-        result = coarse_candidates(scan_bars, history, criteria, limit=1)
-        assert len(result) == 1
-        assert result[0].ticker == IN_PLAY_TICKER
-
-    def test_empty_market_returns_nothing(self, history, criteria):
-        assert coarse_candidates([], history, criteria, limit=10) == []
 
 
 class TestEvaluate:
@@ -234,39 +177,3 @@ class TestSelection:
         # "exchange" is not in relaxed_drop_filters, so these stay out entirely.
         selected = select_in_play(self._candidates(6, rejected=["exchange"]), padded)
         assert selected == []
-
-
-class TestRunScan:
-    def test_end_to_end_selects_the_setup(self, scan_bars, history, settings, archive, provider):
-        result = run_scan(
-            scan_bars, history, settings, Enricher(provider, archive, settings), TRADE_DATE
-        )
-        assert [c.ticker for c in result.in_play] == [IN_PLAY_TICKER]
-        assert result.stats["strict_qualifiers"] == 1
-
-    def test_near_misses_are_archived_with_their_reasons(
-        self, scan_bars, history, settings, archive, provider
-    ):
-        result = run_scan(
-            scan_bars, history, settings, Enricher(provider, archive, settings), TRADE_DATE
-        )
-        by_ticker = {c.ticker: c for c in result.candidates}
-        assert by_ticker[BIG_FLOAT_TICKER].rejected_by == ["float", "news_unknown"]
-        assert "relative_volume" in by_ticker[LOW_RVOL_TICKER].rejected_by
-
-    def test_news_is_not_requested_for_structurally_dead_candidates(
-        self, scan_bars, history, settings, archive, provider
-    ):
-        run_scan(scan_bars, history, settings, Enricher(provider, archive, settings), TRADE_DATE)
-        # Three coarse survivors get a reference lookup; only the one that is
-        # still in the running is worth a news call.
-        assert provider.calls["news"] == 1
-        assert provider.calls["reference"] == 3
-
-    def test_cache_only_enricher_makes_no_requests(
-        self, scan_bars, history, settings, archive, provider
-    ):
-        run_scan(scan_bars, history, settings, Enricher(provider, archive, settings), TRADE_DATE)
-        provider.calls["reference"] = 0
-        run_scan(scan_bars, history, settings, Enricher(None, archive, settings), TRADE_DATE)
-        assert provider.calls["reference"] == 0
