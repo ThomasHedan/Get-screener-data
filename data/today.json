@@ -1,9 +1,15 @@
 {
-  "generated_at": null,
-  "trade_date": null,
-  "session_phase": null,
+  "generated_at": "2026-09-09T11:39:53-04:00",
+  "trade_date": "2026-09-09",
+  "session_phase": "regular",
   "notice": null,
-  "stats": {},
+  "stats": {
+    "universe_rows": 6098,
+    "coarse_candidates": 12,
+    "strict_qualifiers": 0,
+    "in_play": 5,
+    "relaxed_in_play": 5
+  },
   "criteria": {
     "min_change_pct": 10.0,
     "min_price": 1.0,
@@ -13,6 +19,102 @@
     "min_day_volume": 500000,
     "require_news_catalyst": true
   },
-  "in_play": [],
-  "placeholder": true
+  "in_play": [
+    {
+      "ticker": "YMAT",
+      "close": 1.87,
+      "change_pct": 41.13,
+      "gap_pct": 41.89,
+      "relative_volume": 982.06,
+      "volume": 27712076,
+      "avg_volume": 2797583.0,
+      "float_shares": 1578152,
+      "market_cap": 7498893.350943397,
+      "primary_exchange": "XNAS",
+      "score": 0.7693,
+      "qualification": "relaxed",
+      "rejected_by": [
+        "news_unknown"
+      ],
+      "news_checked": false,
+      "news_count": 0
+    },
+    {
+      "ticker": "SUNE",
+      "close": 3.54,
+      "change_pct": 49.37,
+      "gap_pct": 27.0,
+      "relative_volume": 27.38,
+      "volume": 53403800,
+      "avg_volume": 7283204.4,
+      "float_shares": 5442061,
+      "market_cap": 23056400.88607595,
+      "primary_exchange": "XNAS",
+      "score": 0.6633,
+      "qualification": "relaxed",
+      "rejected_by": [
+        "news_unknown"
+      ],
+      "news_checked": false,
+      "news_count": 0
+    },
+    {
+      "ticker": "FTFT",
+      "close": 2.58,
+      "change_pct": 96.95,
+      "gap_pct": -3.05,
+      "relative_volume": 11.07,
+      "volume": 20883538,
+      "avg_volume": 3971964.3,
+      "float_shares": 5372395,
+      "market_cap": 10581514.0,
+      "primary_exchange": "XNAS",
+      "score": 0.6322,
+      "qualification": "relaxed",
+      "rejected_by": [
+        "news_unknown"
+      ],
+      "news_checked": false,
+      "news_count": 0
+    },
+    {
+      "ticker": "ACCL",
+      "close": 3.03,
+      "change_pct": 13.48,
+      "gap_pct": 1.12,
+      "relative_volume": 90.99,
+      "volume": 3211162,
+      "avg_volume": 356210.1,
+      "float_shares": 4937399,
+      "market_cap": 42268200.40449438,
+      "primary_exchange": "XNAS",
+      "score": 0.4996,
+      "qualification": "relaxed",
+      "rejected_by": [
+        "news_unknown"
+      ],
+      "news_checked": false,
+      "news_count": 0
+    },
+    {
+      "ticker": "IRD",
+      "close": 5.785,
+      "change_pct": 33.29,
+      "gap_pct": 22.35,
+      "relative_volume": 18.34,
+      "volume": 35148021,
+      "avg_volume": 5281306.3,
+      "float_shares": 67696422,
+      "market_cap": 481287856.2891705,
+      "primary_exchange": "XNAS",
+      "score": 0.4852,
+      "qualification": "relaxed",
+      "rejected_by": [
+        "float",
+        "news_unknown"
+      ],
+      "news_checked": false,
+      "news_count": 0
+    }
+  ]
 }
