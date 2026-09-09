@@ -1,0 +1,18 @@
+{
+  "generated_at": null,
+  "trade_date": null,
+  "session_phase": null,
+  "notice": null,
+  "stats": {},
+  "criteria": {
+    "min_change_pct": 10.0,
+    "min_price": 1.0,
+    "max_price": 20.0,
+    "min_relative_volume": 5.0,
+    "max_float_shares": 10000000,
+    "min_day_volume": 500000,
+    "require_news_catalyst": true
+  },
+  "in_play": [],
+  "placeholder": true
+}

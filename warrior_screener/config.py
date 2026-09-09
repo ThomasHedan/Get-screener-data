@@ -39,7 +39,6 @@ class Criteria:
     # --- Volume ---
     min_day_volume: int = 500_000
     min_relative_volume: float = 5.0
-    rvol_lookback_days: int = 20
 
     # --- Share structure ---
     max_float_shares: int | None = 10_000_000
@@ -52,7 +51,6 @@ class Criteria:
     # --- Universe hygiene ---
     allowed_security_types: tuple[str, ...] = ("CS", "ADRC")
     allowed_exchanges: tuple[str, ...] = ("XNAS", "XNYS", "XASE", "ARCX", "BATS")
-    exclude_ticker_suffixes: tuple[str, ...] = ("W", "WS", "R", "RT", "U", "P")
 
     # --- Selection ---
     max_in_play: int = 10
@@ -81,8 +79,6 @@ class Criteria:
         """Raise ``ValueError`` if the thresholds are internally inconsistent."""
         if self.min_price <= 0 or self.max_price <= self.min_price:
             raise ValueError("Require 0 < min_price < max_price")
-        if self.rvol_lookback_days < 1:
-            raise ValueError("rvol_lookback_days must be >= 1")
         if self.max_in_play < 1:
             raise ValueError("max_in_play must be >= 1")
         if self.min_in_play > self.max_in_play:
@@ -93,50 +89,17 @@ class Criteria:
 
 @dataclass(frozen=True)
 class Settings:
-    """Runtime settings: provider credentials, budgets and output location."""
+    """Runtime settings: where output goes, and the screen itself."""
 
-    provider: str = "polygon"
-    api_key: str = ""
     data_dir: Path = Path("data")
-
-    # Cost control. Reference/news lookups cost one API call per ticker, so the
-    # scan only enriches the strongest coarse candidates.
-    max_enrich: int = 40
-    requests_per_minute: int = 5  # Polygon's free tier; raise for paid plans
-    max_retries: int = 4
     request_timeout: float = 30.0
-
-    # Reference data (share counts, listing venue) moves slowly; re-fetching it
-    # for every backfilled day would burn the whole rate-limit budget.
-    reference_cache_days: int = 30
-
-    # Prefer TradingView's free, keyless, single-request market snapshot for
-    # reference lookups (exchange, security type, share count) over Polygon's
-    # per-ticker call, falling back to Polygon only for tickers the snapshot
-    # does not carry (typically because they have since been delisted). This
-    # is normally the single biggest cut to a backfill's API-call budget and
-    # needs no extra setup, so it defaults on; see warrior_screener.scanner
-    # .Enricher and warrior_screener.providers.tradingview for the trade-off
-    # (TradingView's *current* classification applied to a historical date).
-    use_tradingview_reference: bool = True
-
-    # Re-fetch the previous session when its cached copy is older than this,
-    # so the previous close is split-adjusted consistently with today's bars.
-    refresh_previous_after_days: float = 1.0
-
-    # Intraday collection
-    collect_intraday: bool = True
-    intraday_start_hhmm: str = "04:00"
-    intraday_end_hhmm: str = "20:00"
 
     criteria: Criteria = field(default_factory=Criteria)
 
     def validate(self) -> None:
         """Raise ``ValueError`` if runtime settings are unusable."""
-        if self.max_enrich < 1:
-            raise ValueError("max_enrich must be >= 1")
-        if self.requests_per_minute < 1:
-            raise ValueError("requests_per_minute must be >= 1")
+        if self.request_timeout <= 0:
+            raise ValueError("request_timeout must be positive")
         self.criteria.validate()
 
 
@@ -176,8 +139,8 @@ def load_settings(
     """Build ``Settings`` from a YAML file, environment variables and overrides.
 
     Precedence, lowest to highest: dataclass defaults, YAML file, environment
-    (``POLYGON_API_KEY`` / ``SCREENER_DATA_DIR``), then explicit ``overrides``
-    (which is where CLI flags land).
+    (``SCREENER_DATA_DIR``), then explicit ``overrides`` (which is where CLI
+    flags land).
     """
     settings = Settings()
     path = config_path or DEFAULT_CONFIG_PATH
@@ -201,9 +164,6 @@ def load_settings(
             Path.cwd(),
         )
 
-    env_key = os.environ.get("POLYGON_API_KEY") or os.environ.get("SCREENER_API_KEY")
-    if env_key:
-        settings = replace(settings, api_key=env_key)
     env_dir = os.environ.get("SCREENER_DATA_DIR")
     if env_dir:
         settings = replace(settings, data_dir=Path(env_dir))

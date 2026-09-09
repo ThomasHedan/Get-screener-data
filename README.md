@@ -1,33 +1,29 @@
-# Warrior-Trading Screener & Intraday Archive
+# Warrior Trading Screener
 
-Screens the whole US equity market every session for the handful of low-float
-momentum stocks that are **in play** — the Ross Cameron / Warrior Trading
-gap-and-go profile — and archives an immutable snapshot of the scan plus
-1-minute intraday bars for the names it picks.
+A dashboard of the low-float momentum stocks that are **in play** — the Ross
+Cameron / Warrior Trading gap-and-go profile — screened from the whole US
+market in a single request, refreshed two hours before the open, and deployed
+as a static page on Vercel.
 
-The point of running it daily is the archive. A screen you can only run on
-today's data tells you nothing about strategy; a screen whose output is written
-down every day, and never rewritten, gives you a **survivorship-bias-free**
-panel of exactly the stocks a momentum trader would have been watching, including
-the ones that were later delisted, reverse-split into oblivion, or acquired.
+The screen is Python (`warrior_screener/`). The board is a Next.js page
+(`app/`). Between them is one committed file, `data/today.json`: the screener
+writes it, a GitHub Actions workflow commits it, and that push is what
+redeploys the site.
 
 ---
 
 ## The screen
 
-Defaults implement the criteria Ross Cameron publicly describes:
-
 | # | Criterion | Default | Config key |
 |---|-----------|---------|------------|
 | 1 | Up on the day | **≥ 10%** vs. previous close | `min_change_pct` |
 | 2 | Price | **$1 – $20** | `min_price` / `max_price` |
-| 3 | Relative volume | **≥ 5×** the 20-day average | `min_relative_volume` |
+| 3 | Relative volume | **≥ 5×** | `min_relative_volume` |
 | 4 | Float | **< 10M shares** | `max_float_shares` |
-| 5 | News catalyst | **≥ 1 headline** since the prior close | `require_news_catalyst` |
+| 5 | News catalyst | **≥ 1 headline** | `require_news_catalyst` |
 
-Plus universe hygiene: common stock and ADRs only, major exchanges only,
-warrants/rights/units excluded, and a `min_day_volume` floor (500k shares) so
-untradeable names never reach the list.
+Plus universe hygiene: common stock and ADRs only, major exchanges only, and a
+`min_day_volume` floor (500k shares) so untradeable names never reach the list.
 
 ### Ranking: which 5–10?
 
@@ -41,420 +37,167 @@ score = 0.40 · rank(relative volume)
 ```
 
 The components are **percentile ranks within that day's own candidate pool**,
-not absolute values. That keeps scores comparable between a sleepy Tuesday and a
-small-cap frenzy, and stops one 400×-RVOL outlier from flattening everything
-else. All weights live in `config/criteria.yml`, and every raw input is stored
-alongside the score so you can re-rank however you like later.
+not absolute values. That keeps scores comparable between a sleepy Tuesday and
+a small-cap frenzy, and stops one 400×-RVOL outlier from flattening everything
+else. All weights live in `config/criteria.yml`.
 
-### Strict vs. relaxed picks
+### Strict vs. relaxed
 
 Some sessions genuinely do not have five stocks with a sub-10M float running 5×
 volume on a catalyst. Rather than return two names or invent three, the selector
 tops the list up to `min_in_play` with the best names that fail *only* the
-relaxable criteria (float, RVOL, news) and tags them `qualification=relaxed`.
-The price/change/volume/exchange core is never relaxed.
-
-**For quant work, filter to `qualification == "strict"` unless you have a reason
-not to.** Set `fill_to_min: false` (or `--strict-only`) to switch padding off.
+relaxable criteria (float, RVOL, news) and tags them `relaxed`. The
+price/change/volume/exchange core is never relaxed. The board shows the tag and
+which criteria each relaxed name missed.
 
 ---
 
-## Setup
+## Two things this data is not
 
-Requires **Python 3.10+**. Check with `python3 --version` (macOS/Linux) or
-`python --version` (Windows).
+**Relative volume is time-of-day normalized.** TradingView compares volume so
+far today against the average traded *by this same clock time* over the past 10
+sessions — not today's total against an N-day average total. Before the open it
+is comparing two thin pre-market windows, so it reads high and noisy, and only
+converges toward a full-day RVOL near the close.
 
-### 1. Get the code and a virtualenv
+**Nothing checks for news.** There is no free bulk news source behind this
+screen, so the catalyst criterion never actually runs: every row carries
+`news_checked: false` and lands as `relaxed` rather than `strict`. That is the
+honest state of things — "unknown", not "no catalyst". Pass `--no-news` to drop
+the criterion and see the structural qualifiers as `strict`.
+
+**And the pre-open board is partly stale by design.** TradingView has no "no
+trades yet" signal: it always answers with the most recent session. At 07:30 ET
+the names already gapping on real pre-market volume are live, and the quieter
+ones still show yesterday's numbers. The scan detects this
+(`warrior_screener/market_calendar.py`), writes the caveat into
+`data/today.json`, and the page prints it as a banner.
+
+---
+
+## Running it yourself
+
+Requires **Python 3.10+** and **Node 18.18+**. No API key: the screen calls
+TradingView's public scanner endpoint (`scanner.tradingview.com`), the same
+JSON call `tradingview.com/screener` makes.
 
 ```bash
-git clone https://github.com/ThomasHedan/Get-screener-data.git
-cd Get-screener-data
+pip install -r requirements.txt
 
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-
-pip install --upgrade pip          # editable installs need pip >= 21.3
-pip install -e .                   # gives you the `warrior-screener` command
+python -m warrior_screener snapshot                    # print the board
+python -m warrior_screener snapshot --no-news          # structural qualifiers as strict
+python -m warrior_screener snapshot --json             # write data/today.json
 ```
 
-> **`error: ... missing the 'build_editable' hook`?** Your venv's `pip` (or
-> `setuptools`) predates [PEP 660](https://peps.python.org/pep-0660/). Either run
-> `pip install --upgrade pip setuptools` and retry `pip install -e .`, or skip
-> the editable install entirely:
-> ```bash
-> pip install -r requirements.txt
-> python -m warrior_screener collect --date yesterday   # instead of warrior-screener ...
-> ```
-> `python -m warrior_screener` is the same tool with no build step at all — use
-> it in place of the `warrior-screener` command in every example below if you
-> go this route.
-
-`pip install -r requirements.txt` works too if you would rather run it as
-`python -m warrior_screener`. Either way the only dependencies are `requests`
-and `PyYAML`.
-
-### 2. Add your API key
-
-Get a free key at [polygon.io](https://polygon.io/dashboard/signup), then create
-a `.env` file in the repository root:
+Then the dashboard:
 
 ```bash
-echo 'POLYGON_API_KEY=your_key_here' > .env
+npm install
+npm run screen     # refresh data/today.json
+npm run dev        # http://localhost:3000
 ```
 
-`.env` is gitignored. For an interactive shell, export it instead:
+`npm run build` produces a static export in `out/`.
+
+> **That endpoint is unofficial and undocumented.** It is reverse-engineered,
+> with no published contract or SLA, and could change or start blocking
+> non-browser traffic without notice. Treat it as a convenience, not
+> infrastructure. When it is unreachable the screen exits non-zero and nothing
+> is committed, so the board keeps showing the last good scan rather than
+> going blank.
+
+### Tuning the screen
+
+Every threshold is in `config/criteria.yml`, and the ones worth changing often
+are also CLI flags:
 
 ```bash
-export POLYGON_API_KEY=your_key_here          # Windows PowerShell: $env:POLYGON_API_KEY="..."
-```
-
-### 3. Check it works
-
-```bash
-warrior-screener collect --date yesterday
-```
-
-That screens one session and prints the in-play table. If it prints an HTTP 401,
-the key is wrong; if it reports `market_closed`, pick a weekday.
-
-> **Run commands from the repository root.** The config file and `data/`
-> directory are resolved relative to your working directory. If `config/criteria.yml`
-> is not found the screener warns and falls back to built-in defaults, so you
-> will not silently screen on criteria you thought you had edited.
-
-### 4. Build some history
-
-```bash
-warrior-screener backfill --start 2025-01-02 --end 2026-08-31
-```
-
-Backfill walks oldest-first so each day's RVOL window is already cached when the
-next day needs it, and a failed session is logged and skipped rather than
-aborting the range. Re-running is idempotent: archived sessions are skipped
-unless you pass `--force`.
-
-**Budget the time before you start it**, even though it is now considerably
-faster than a raw Polygon-only setup. By default (`use_tradingview_reference:
-true`), reference lookups — exchange, security type, share count, up to
-`max_enrich` (40) Polygon calls a day — are answered for free from a single
-TradingView snapshot fetched once for the whole backfill instead. What is
-still bound by Polygon's 5-requests/minute free tier is the grouped daily bar
-(1 call/session), news lookups (varies with how many candidates survive the
-coarse filters — usually a handful, not 40), and minute bars for the 5-10
-in-play names. That is a real cut versus the old per-ticker-reference pace,
-but treat it as directional rather than a promised number — actual timing
-depends on how many candidates survive on a given day. Start with a month to
-see it for yourself. It is safe to interrupt with Ctrl-C and resume —
-completed sessions are skipped on the next run.
-
-### 5. Everyday commands
-
-```bash
-warrior-screener collect      # screen today, archive everything
-warrior-screener show         # print today's in-play list
-warrior-screener status       # archive coverage, and gaps
+python -m warrior_screener snapshot --max-float 20000000 --min-change 20
+python -m warrior_screener snapshot --max-float 0        # disable the float filter
+python -m warrior_screener snapshot --strict-only        # never pad to min_in_play
 ```
 
 ---
 
-## Running it every day
+## The daily refresh
 
-The archive is only useful if it is actually written every session, so schedule it.
+`.github/workflows/refresh.yml` runs the screen at **07:30 ET on weekdays**, two
+hours before the open, and commits `data/today.json`.
 
-### macOS / Linux (cron)
+GitHub cron is UTC-only, so 07:30 ET is two entries plus a guard rather than one
+line: 11:30 UTC is 07:30 EDT but 06:30 EST, and 12:30 UTC is the reverse. Both
+fire year-round and the guard lets exactly one through — whichever currently
+lands in the 07:00–08:30 ET window. The window is wider than a minute because
+GitHub's scheduler runs late under load; a refresh at 07:50 beats none. Market
+holidays are skipped via `market_calendar.is_trading_day`.
 
-`crontab -e`, then:
+Two things to know:
 
-```cron
-CRON_TZ=America/New_York
-15 17 * * 1-5 /full/path/to/Get-screener-data/scripts/run_daily.sh >> /full/path/to/Get-screener-data/logs/cron.log 2>&1
-```
+- **Scheduled workflows only run from the repository's default branch.** The
+  cron will not fire while this lives on a feature branch — merge it first, or
+  trigger it by hand from the Actions tab (`workflow_dispatch` skips the time
+  guard).
+- **Update `US_MARKET_HOLIDAYS` every January** in
+  `warrior_screener/market_calendar.py`. There is no free unauthenticated bulk
+  calendar API, so the list is hardcoded; a date past its coverage falls back to
+  "any weekday is a trading day".
 
-`mkdir logs` first. The script cd's to the repository itself, sources `.env`, and
-exits non-zero on failure so cron will tell you when something breaks. It uses
-whichever `python3` is on cron's PATH — to pin the virtualenv, set
-`PYTHON=/full/path/to/Get-screener-data/.venv/bin/python3` in `.env`.
-
-On macOS, cron needs Full Disk Access (System Settings → Privacy & Security) to
-write outside its own directory, and a sleeping laptop will not run the job. If
-your machine is not reliably awake at 17:15 ET, use `launchd` with
-`StartCalendarInterval`, which catches up on missed runs after a wake.
-
-### Windows (Task Scheduler)
-
-`scripts/run_daily.sh` is bash. Either run it under WSL, or create a Basic Task
-that runs weekdays and points at:
-
-```
-Program:   C:\path\to\Get-screener-data\.venv\Scripts\python.exe
-Arguments: -m warrior_screener collect
-Start in:  C:\path\to\Get-screener-data
-```
-
-Set `POLYGON_API_KEY` as a user environment variable, since Task Scheduler will
-not read `.env`.
-
-### What time to run
-
-17:15 ET is ~75 minutes after the close, by which point consolidated volume has
-settled. **On the free tier same-day data may not be published until the next
-morning** — if `collect` returns nothing useful, move the job to the following
-morning and use `--date yesterday`.
-
-Whatever you choose, check `data/runs.jsonl` occasionally: one line per run, so
-a gap in the archive is visible rather than silent.
+To refresh more often than once a day, add cron entries and widen the guard
+window. Vercel's own cron on the Hobby plan is once-daily, which is why the
+schedule lives in Actions.
 
 ---
 
-## Live check: `snapshot` (experimental, this branch only)
+## Deploying
 
-```bash
-python -m warrior_screener snapshot            # what's in play right now
-python -m warrior_screener snapshot --no-news  # widen to structural qualifiers only
-python -m warrior_screener snapshot --save     # also write to data/live_snapshots/
-```
-
-No API key, no rate-limit budget, results in a couple of seconds. It calls
-TradingView's public screener endpoint (`scanner.tradingview.com` — the same
-JSON call `tradingview.com/screener` makes), which is the only free source
-found that returns relative volume, average volume, float and market cap for
-the **whole US market in one request**. It reuses the same criteria, scoring
-and selection as the archived pipeline (`warrior_screener.scanner`), so a
-`snapshot` candidate means the same thing a `collect` candidate does — with
-three differences worth knowing before you rely on it:
-
-1. **Unofficial and undocumented.** This is a reverse-engineered endpoint with
-   no published contract or SLA. It could change or start blocking non-browser
-   traffic without notice. Treat it as a convenience, not infrastructure.
-2. **Relative volume is time-of-day normalized, not full-session.** It compares
-   volume so far today against the average volume traded *by this same clock
-   time* over the past 10 sessions — not `today's total volume / N-day average
-   total volume`, which is what the archived Polygon pipeline computes. The two
-   numbers are not comparable, and TradingView's figure only converges toward a
-   full-day RVOL near the close. This is arguably the more useful number for a
-   live pre-market check; it is not the same measurement as `in_play.csv`.
-3. **No date parameter, and no free bulk news source.** `snapshot` only ever
-   sees the current live session — it cannot backfill a past date, which is
-   why it is a separate command rather than a flag on `collect`. And with no
-   catalyst check behind it, every result carries `news_checked=False`; by
-   default that makes every row `relaxed` rather than `strict` (the same
-   "unknown, not absent" signal the archived pipeline uses), so pass
-   `--no-news` if you want the structural qualifiers surfaced as `strict`.
-
-`--save` writes to `data/live_snapshots/<timestamp>.csv`, deliberately **not**
-`data/scans/` or `in_play_history.csv` — mixing a time-of-day-normalized RVOL
-into the archive's full-day RVOL column would quietly corrupt anything trained
-on it.
-
-The same TradingView snapshot has a second, quieter use in `collect` and
-`backfill` — see "Cutting Polygon calls with the TradingView reference cache"
-under Data provider below. That use is on by default and unrelated to running
-`snapshot` yourself; the two share a data source, not a code path that mixes
-their results.
+The site is a Next.js static export, so Vercel needs no configuration beyond
+importing the repository — the framework preset builds `app/` and serves `out/`.
+Every push that changes `data/today.json` triggers a redeploy, which is how the
+board stays current without a server.
 
 ---
 
-## Data provider
+## Project layout
 
-[Polygon.io](https://polygon.io) — rebranded to **Massive.com** as of 2026;
-the same API key and `api.polygon.io` endpoints keep working, only the
-marketing site and billing pages moved — is the default, for two reasons:
-
-1. `/v2/aggs/grouped` prices the **entire** US equity universe for one session in
-   a single request, so a daily scan costs ~1 API call plus enrichment rather
-   than thousands.
-2. Its historical endpoints keep serving tickers **after they are delisted**,
-   which is the whole reason this archive can avoid survivorship bias.
-
-**It works on the free tier** (5 requests/minute, end-of-day data, **2 years of
-history** — a hard ceiling on the free plan, not something this tool can work
-around). What still uses that 5-req/min budget for one session: the grouped
-daily call, a news lookup per surviving candidate, and one call per in-play
-ticker for minute bars. Reference lookups (exchange, security type, share
-count) do **not** by default — see below. On a paid plan, raise
-`requests_per_minute` and it finishes in seconds.
-
-To use a different vendor, implement the four methods of
-`warrior_screener.providers.base.MarketDataProvider` and wire it into
-`cli._make_provider`. Nothing else in the codebase knows about Polygon.
-
-### Cutting Polygon calls with the TradingView reference cache
-
-`use_tradingview_reference: true` (the default) answers reference lookups from
-the free TradingView snapshot (the same one behind `snapshot` — see below)
-instead of a Polygon call, for any ticker still listed. This is fetched
-**once** per `collect` or `backfill` run, not once per session, so it costs a
-single ~1-second HTTP request regardless of how many days you are backfilling
-— normally the largest single cut to a backfill's Polygon call count, since
-reference lookups could otherwise run up to `max_enrich` (40) calls a day.
-
-A ticker missing from the snapshot — the common case is one that has since
-been delisted, since a live snapshot only lists what is currently tradeable —
-falls back to Polygon exactly as before, so the archive's coverage of
-long-gone tickers is unaffected. If the snapshot endpoint is unreachable, the
-run logs a warning and continues on Polygon alone rather than failing.
-
-The trade-off: TradingView's classification is *current*, applied to a
-possibly historical date. Exchange, security type and share count change
-rarely enough that this is a reasonable stand-in — the same kind of proxy
-already accepted for float (see below) — but it is not exact for a ticker that
-has changed exchange or structure since. Turn it off with
-`--no-tradingview-reference` or `use_tradingview_reference: false` if that
-matters for your research.
-
-### Known data limitation: float vs. shares outstanding
-
-No mainstream API publishes true **free float**. The screener uses Polygon's
-`share_class_shares_outstanding` as the proxy, which **overstates** float on
-exactly the small caps this screen targets (insider and locked-up shares are
-included). Consequences: the float filter is *conservative* — it will reject some
-genuine low-float runners, and never invents one.
-
-To fix it per ticker, drop a CSV at `data/reference/float_overrides.csv`:
-
-```csv
-ticker,float_shares
-ABCD,3200000
-WXYZ,850000
+```
+warrior_screener/
+  cli.py               `snapshot`, the table, and the JSON the dashboard reads
+  live_snapshot.py     TradingView rows -> scored candidates
+  scanner.py           the screen itself: filters, scoring, selection (pure)
+  config.py            criteria + settings, loaded from config/criteria.yml
+  market_calendar.py   is the market open, and is this data actually today's
+  models.py            Candidate and friends
+  providers/
+    tradingview.py     the one HTTP call, and its column mapping
+app/                   the dashboard (page.tsx, layout.tsx, globals.css)
+lib/screener.ts        the payload's TypeScript shape and formatting helpers
+data/today.json        the committed scan the page renders
 ```
 
-Those values take precedence over the provider's number. The
-`shares_outstanding` column is always preserved separately, so you can see which
-rows were overridden.
+`scanner.py` does no I/O: it takes candidates somebody else built and applies
+the filters, the score and the selection. That is what lets the same screen
+definition run against a different data source without touching it.
 
 ---
 
-## What gets stored
+## Known data limitation: float vs. shares outstanding
 
-```
-data/
-├── daily_bars/2026-08-28.csv        full-market OHLCV — the RVOL window, and a
-│                                    complete daily archive in its own right
-├── scans/2026-08-28/
-│   ├── candidates.csv               every evaluated candidate + why each failed
-│   └── in_play.csv                  the 5–10 selected names
-├── intraday/2026-08-28/ABCD.csv     1-minute bars, 04:00–20:00 ET
-├── features/2026-08-28.csv          one flat feature row per in-play ticker
-├── reference/
-│   ├── tickers.jsonl                append-only reference snapshots
-│   ├── cache.json                   TTL-bounded lookup cache
-│   └── float_overrides.csv          your hand-checked floats (optional)
-├── in_play_history.csv              every in-play row ever selected, one file
-└── runs.jsonl                       one record per run — audit your gaps
-```
-
-Everything is plain CSV/JSONL written with the standard library, and every write
-is atomic (temp file + rename) so an interrupted run never leaves a half-written
-partition. The collector deliberately does **not** import pandas: a cron job that
-must run 252 times a year should not break because a binary wheel stopped
-matching the interpreter.
-
-`candidates.csv` keeps the **near-misses**, not just the winners, with a
-`rejected_by` column naming each failed criterion. That is what lets you ask
-later whether the 10M float cut-off was actually the right one.
-
-### Feature columns
-
-`features/<date>.csv` joins the screen's verdict to the intraday behaviour:
-
-- **Screen**: `score`, `qualification`, `gap_pct`, `change_pct`,
-  `relative_volume`, `float_shares`, `news_count`
-- **Pre-market**: `premarket_high` / `_low` / `_volume`, `premarket_high_time`,
-  `premarket_change_pct`
-- **Regular session**: `open`, `high`, `low`, `close`, `high_time`, `low_time`,
-  `minutes_to_high`, `rth_volume`, `rth_vwap`
-- **Move shape**: `open_to_high_pct`, `open_to_close_pct`, `close_vs_high_pct`
-  (how much of the move it gave back), `first_5min_range_pct`
-- **Volume distribution**: `first_30min_volume_share`, `first_hour_volume_share`,
-  `max_minute_volume`, `big_volume_minutes` (minutes over 100k shares)
-- **Microstructure**: `avg_minute_range_pct`, `minutes_traded`,
-  `untraded_minutes` (a proxy for LULD halts, which these names hit often)
-
-### A note on `news_checked`
-
-News lookups cost an API call, so they are skipped for candidates already
-rejected on structure. Rows carry `news_checked` to say whether the lookup ran:
-**`news_count == 0` only means "no catalyst" when `news_checked` is true.**
-Reject reasons distinguish `news` (looked, found nothing) from `news_unknown`
-(never looked).
+No mainstream free API publishes true **free float**. This uses TradingView's
+float figure, which for most small caps is shares outstanding or close to it,
+and therefore **overstates** float on exactly the names this screen targets
+(insider and locked-up shares included). The float filter is consequently
+*conservative*: it rejects some genuine low-float runners, and never invents
+one.
 
 ---
 
-## Research
-
-```python
-from warrior_screener.dataset import load_features, load_intraday, load_in_play_history
-
-features = load_features("data", strict_only=True)  # one row per ticker per day
-history = load_in_play_history("data")  # every selection ever made
-bars = load_intraday("data", "2026-08-28", "ABCD")  # minute bars, indexed by time
-
-# e.g. does the high of day come in the first 15 minutes?
-early = features[features["minutes_to_high"] <= 15]
-print(len(early) / len(features))
-```
-
-`pandas` is only needed for `warrior_screener.dataset` — install it with
-`pip install 'warrior-screener[research]'`.
-
-### Re-tuning the criteria without spending API calls
-
-`rescan` re-runs the screen against the cached archive, offline, writing nothing:
-
-```bash
-python -m warrior_screener rescan --date 2026-08-28 --max-float 20000000
-python -m warrior_screener rescan --date 2026-08-28 --min-rvol 3 --no-news
-```
-
-It reuses the reference and news data recorded by the original scan, so the
-selections are directly comparable. `--max-float 0` disables the float filter
-entirely.
-
----
-
-## Configuration
-
-`config/criteria.yml` holds every threshold; each is also a CLI flag. Precedence
-is defaults → YAML → environment (`POLYGON_API_KEY`, `SCREENER_DATA_DIR`) → CLI.
-Unknown keys are rejected loudly rather than ignored, so a typo in the YAML can
-never silently run a different screen than you think.
-
-## Development
+## Tests
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest          # 162 tests, no network and no API key required
-python -m ruff check .
-python -m ruff format .
+pytest          # 111 tests, no network, no API key
+ruff check .
 ```
 
-The whole pipeline is testable offline: `tests/conftest.py` provides a fake
-provider that serves a synthetic market, and the scanner and feature extraction
-are pure functions over it.
-
-## Caveats
-
-- **This is a data pipeline, not a trading system.** It reproduces the screen and
-  records what happened; it takes no position on entries, exits or sizing.
-- **The free tier caps history at 2 years.** This is Polygon/Massive's own
-  limit, not something faster code or the TradingView reference cache changes
-  — it applies to how far back `grouped_daily` and minute bars can be
-  requested at all. Longer history needs a paid plan (or accept that the
-  archive's depth is bounded by when you started running it, which is exactly
-  the survivorship-bias-free advantage described at the top of this file).
-- **The screen is end-of-day.** It reconstructs which stocks *were* in play using
-  the completed session, which is the right basis for research but is not the
-  live 09:20 ET pre-market scanner a discretionary trader watches.
-- **Float is a proxy** (see above), and RVOL is undefined for tickers with fewer
-  than 3 prior sessions — freshly listed names are reported as unknown rather
-  than assigned a fabricated multiple.
-- **Split adjustment.** Provider prices are split-adjusted as of the moment they
-  are fetched, so cached bars drift out of alignment once a ticker splits — and
-  these small caps reverse-split constantly to hold listing compliance. The
-  previous session is therefore re-fetched whenever its cached copy is more than
-  a day old, which keeps `gap_pct` and `change_pct` correct (without it, a
-  routine 1:10 reverse split reads as a +900% gapper). The *older* bars in the
-  RVOL window are not re-fetched, so `relative_volume` can be off by the split
-  factor for a ticker that split inside the lookback. If that matters to you,
-  delete `data/daily_bars/*.csv` periodically to force a clean re-fetch — the
-  scans and intraday bars are unaffected.
+The suite builds TradingView rows directly (`tests/test_live_snapshot.make_row`),
+so nothing in it touches the live endpoint.

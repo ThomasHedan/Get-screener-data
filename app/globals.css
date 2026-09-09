@@ -1,0 +1,401 @@
+/* One dark theme on purpose: this is a pre-open trading board, read in a dim
+   room next to a chart, and a screen that changes contrast with the OS setting
+   makes the up/down colors harder to trust at a glance. */
+
+:root {
+  --bg: #0b0e14;
+  --panel: #121722;
+  --panel-raised: #172033;
+  --border: #232c3f;
+  --text: #e6ecf7;
+  --muted: #8a98b3;
+  --faint: #5d6a85;
+  --up: #35d29a;
+  --down: #ff6b6b;
+  --accent: #f0b429;
+  --accent-dim: #3a2f14;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 40px 24px 64px;
+}
+
+/* ------------------------------------------------------------------ Masthead */
+
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.tagline {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.masthead-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.phase {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  background: var(--panel);
+}
+
+.phase-regular {
+  color: var(--up);
+  border-color: rgba(53, 210, 154, 0.35);
+  background: rgba(53, 210, 154, 0.1);
+}
+
+.phase-pre-market,
+.phase-after-hours {
+  color: var(--accent);
+  border-color: rgba(240, 180, 41, 0.35);
+  background: rgba(240, 180, 41, 0.1);
+}
+
+.stamp {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--faint);
+}
+
+/* -------------------------------------------------------------------- Notice */
+
+.notice {
+  margin: 20px 0 0;
+  padding: 12px 16px;
+  border: 1px solid rgba(240, 180, 41, 0.35);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--accent-dim);
+  color: #f5d78e;
+  font-size: 14px;
+}
+
+/* ------------------------------------------------------------------ Criteria */
+
+.criteria {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 24px 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  font-size: 13px;
+}
+
+.chip-label {
+  color: var(--faint);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.chip-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------------------- Board */
+
+.board-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.board {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.board thead th {
+  position: sticky;
+  top: 0;
+  padding: 12px 14px;
+  background: var(--panel-raised);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.board tbody td,
+.board tbody th {
+  padding: 14px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 400;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.board tbody tr:last-child td,
+.board tbody tr:last-child th {
+  border-bottom: none;
+}
+
+.board tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.num {
+  text-align: right !important;
+}
+
+.strong {
+  font-weight: 600;
+}
+
+.col-rank {
+  width: 44px;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.col-ticker {
+  min-width: 190px;
+}
+
+.ticker-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ticker {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.qual {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+}
+
+.qual-strict {
+  color: var(--up);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.exchange {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.up {
+  color: var(--up);
+}
+
+.down {
+  color: var(--down);
+}
+
+/* --------------------------------------------------------------------- Score */
+
+.col-score {
+  min-width: 130px;
+}
+
+.score {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.score-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-raised);
+  overflow: hidden;
+}
+
+.score-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #2f6f8f, var(--up));
+}
+
+.score-value {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* --------------------------------------------------------------------- Empty */
+
+.empty {
+  padding: 48px 24px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  text-align: center;
+  color: var(--muted);
+}
+
+.empty-head {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.empty p {
+  margin: 0 auto;
+  max-width: 60ch;
+  font-size: 14px;
+}
+
+/* --------------------------------------------------------------------- Stats */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 24px 0;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ----------------------------------------------------------------- Footnotes */
+
+.footnotes {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.footnotes p {
+  margin: 0 0 12px;
+  max-width: 78ch;
+}
+
+.footnotes strong {
+  color: var(--text);
+}
+
+.schedule {
+  color: var(--faint);
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: 24px 16px 48px;
+  }
+
+  .masthead h1 {
+    font-size: 24px;
+  }
+
+  /* The board still scrolls sideways on a phone, but change% and RVOL are the
+     two numbers you actually open this on a phone to read -- so drop rank,
+     gap, volume and market cap and let those land on the first screen. */
+  .board thead th:nth-child(1),
+  .board tbody tr > *:nth-child(1),
+  .board thead th:nth-child(5),
+  .board tbody tr > *:nth-child(5),
+  .board thead th:nth-child(7),
+  .board tbody tr > *:nth-child(7),
+  .board thead th:nth-child(9),
+  .board tbody tr > *:nth-child(9) {
+    display: none;
+  }
+
+  .board thead th,
+  .board tbody td,
+  .board tbody th {
+    padding: 12px 10px;
+  }
+
+  .col-ticker {
+    min-width: 140px;
+  }
+
+  .col-score {
+    min-width: 96px;
+  }
+}

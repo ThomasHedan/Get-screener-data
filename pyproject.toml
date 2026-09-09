@@ -5,13 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "warrior-screener"
 version = "0.1.0"
-description = "Warrior-Trading-style momentum screener with a survivorship-bias-free intraday archive"
+description = "Warrior-Trading-style live momentum screener behind the Warrior Trading Screener dashboard"
 requires-python = ">=3.10"
 dependencies = ["requests>=2.31", "PyYAML>=6.0"]
 
 [project.optional-dependencies]
-research = ["pandas>=2.0"]
-dev = ["pytest>=8.0", "ruff>=0.6", "pandas>=2.0"]
+dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [project.scripts]
 warrior-screener = "warrior_screener.cli:main"

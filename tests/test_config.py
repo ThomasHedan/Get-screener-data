@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from warrior_screener.config import Criteria, Settings, load_settings
@@ -12,8 +14,7 @@ def config_file(tmp_path):
     path = tmp_path / "criteria.yml"
     path.write_text(
         """
-provider: polygon
-max_enrich: 12
+data_dir: archive
 criteria:
   min_price: 2.0
   max_price: 10.0
@@ -41,7 +42,7 @@ class TestDefaults:
 class TestLoading:
     def test_reads_yaml(self, config_file):
         settings = load_settings(config_file)
-        assert settings.max_enrich == 12
+        assert settings.data_dir == Path("archive")
         assert settings.criteria.min_price == 2.0
         assert settings.criteria.max_float_shares == 20_000_000
         assert settings.criteria.allowed_exchanges == ("XNAS",)
@@ -73,9 +74,9 @@ class TestLoading:
 
 
 class TestPrecedence:
-    def test_environment_supplies_the_api_key(self, config_file, monkeypatch):
-        monkeypatch.setenv("POLYGON_API_KEY", "from-env")
-        assert load_settings(config_file).api_key == "from-env"
+    def test_environment_supplies_the_data_dir(self, config_file, monkeypatch):
+        monkeypatch.setenv("SCREENER_DATA_DIR", "/tmp/from-env")
+        assert load_settings(config_file).data_dir == Path("/tmp/from-env")
 
     def test_overrides_beat_the_file(self, config_file):
         settings = load_settings(config_file, overrides={"criteria": {"min_price": 5.0}})
@@ -83,8 +84,8 @@ class TestPrecedence:
         assert settings.criteria.max_price == 10.0  # still from the file
 
     def test_none_overrides_are_ignored(self, config_file):
-        settings = load_settings(config_file, overrides={"max_enrich": None})
-        assert settings.max_enrich == 12
+        settings = load_settings(config_file, overrides={"data_dir": None})
+        assert settings.data_dir == Path("archive")
 
 
 class TestValidation:
@@ -93,7 +94,6 @@ class TestValidation:
         [
             {"min_price": 0.0},
             {"min_price": 30.0, "max_price": 20.0},
-            {"rvol_lookback_days": 0},
             {"max_in_play": 0},
             {"min_in_play": 20, "max_in_play": 10},
             {"max_float_shares": -1},
@@ -105,8 +105,8 @@ class TestValidation:
         with pytest.raises(ValueError):
             replace(Criteria(), **overrides).validate()
 
-    def test_zero_rpm_is_rejected(self):
+    def test_non_positive_timeout_is_rejected(self):
         from dataclasses import replace
 
         with pytest.raises(ValueError):
-            replace(Settings(), requests_per_minute=0).validate()
+            replace(Settings(), request_timeout=0).validate()

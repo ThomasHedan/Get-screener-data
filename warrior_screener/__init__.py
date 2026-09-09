@@ -1,14 +1,13 @@
-"""Warrior-Trading-style momentum screener and intraday data collector.
+"""Warrior-Trading-style live momentum screener.
 
-Screens the US equity market for the handful of low-float momentum stocks that
-are "in play" on a given session (the Ross Cameron / Warrior Trading gap-and-go
-profile), then archives an immutable per-day snapshot of the scan plus 1-minute
-intraday bars for the selected names.
+Screens the whole US equity market for the handful of low-float momentum
+stocks that are "in play" right now -- the Ross Cameron / Warrior Trading
+gap-and-go profile -- from a single keyless TradingView request, and writes
+the result as JSON for the Warrior Trading Screener dashboard.
 
-The archive is append-only and keyed by trade date, so tickers that are later
-delisted, renamed or removed from the provider's active universe stay in the
-dataset -- which is what makes the history usable for survivorship-bias-free
-quant research.
+The screen itself lives in :mod:`warrior_screener.scanner` and is pure: the
+filters, the composite score and the strict/relaxed selection are the same
+code regardless of where the candidates came from.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

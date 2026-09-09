@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import csv
+import json
 
 import pytest
 
@@ -32,19 +32,43 @@ class TestSnapshotCommand:
         assert "GAPR" in out
         assert "QUIET" not in out  # only 1% change, never clears min_change_pct
 
-    def test_does_not_write_to_the_archive_by_default(self, cli_env, tmp_path):
+    def test_writes_nothing_unless_asked(self, cli_env, tmp_path):
         cli.main(cli_env + ["snapshot"])
-        assert not (tmp_path / "data" / "live_snapshots").exists()
-        assert not (tmp_path / "data" / "scans").exists()
+        assert not (tmp_path / "data").exists()
 
-    def test_save_writes_a_timestamped_file_outside_scans(self, cli_env, tmp_path):
-        assert cli.main(cli_env + ["snapshot", "--save"]) == 0
-        saved_dir = tmp_path / "data" / "live_snapshots"
-        files = list(saved_dir.glob("*.csv"))
-        assert len(files) == 1
-        with files[0].open() as handle:
-            rows = list(csv.DictReader(handle))
-        assert rows[0]["ticker"] == "GAPR"
+    def test_json_flag_writes_the_dashboard_payload(self, cli_env, tmp_path):
+        out = tmp_path / "board.json"
+        assert cli.main(cli_env + ["snapshot", "--json", str(out)]) == 0
+        payload = json.loads(out.read_text())
+        assert [row["ticker"] for row in payload["in_play"]] == ["GAPR"]
+        assert payload["trade_date"] and payload["generated_at"]
+        assert payload["criteria"]["min_change_pct"] == 10.0
+        assert payload["stats"]["universe_rows"] == 2
+
+    def test_json_carries_the_staleness_notice_for_the_page(self, cli_env, tmp_path, monkeypatch):
+        # The dashboard refreshes pre-market, so the caveat has to survive the
+        # trip into the JSON -- a page that cannot tell live data from
+        # yesterday's leftovers is worse than no page.
+        monkeypatch.setattr(
+            "warrior_screener.market_calendar.session_phase", lambda *a: "pre-market"
+        )
+        out = tmp_path / "board.json"
+        cli.main(cli_env + ["snapshot", "--json", str(out)])
+        payload = json.loads(out.read_text())
+        assert payload["session_phase"] == "pre-market"
+        assert "may still show yesterday's numbers" in payload["notice"]
+
+    def test_regular_session_json_has_no_notice(self, cli_env, tmp_path, monkeypatch):
+        monkeypatch.setattr("warrior_screener.market_calendar.session_phase", lambda *a: "regular")
+        out = tmp_path / "board.json"
+        cli.main(cli_env + ["snapshot", "--json", str(out)])
+        assert json.loads(out.read_text())["notice"] is None
+
+    def test_quiet_writes_json_without_printing_the_table(self, cli_env, tmp_path, capsys):
+        out = tmp_path / "board.json"
+        cli.main(cli_env + ["snapshot", "--quiet", "--json", str(out)])
+        assert "GAPR" not in capsys.readouterr().out
+        assert json.loads(out.read_text())["in_play"]
 
     def test_no_news_flag_reaches_the_shared_criteria(self, cli_env, capsys):
         cli.main(cli_env + ["snapshot", "--no-news"])
