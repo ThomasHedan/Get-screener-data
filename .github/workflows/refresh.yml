@@ -1,23 +1,50 @@
 name: Refresh screener
 
-# Runs the screen two hours before the open and commits data/today.json, which
-# is what redeploys the dashboard on Vercel.
+# Four measurements a trading day, all Eastern:
 #
-# GitHub cron is UTC-only, so 07:30 ET is two entries and a guard rather than
-# one line: 11:30 UTC is 07:30 EDT (summer) but 06:30 EST (winter), and 12:30
-# UTC is the reverse. Both fire year-round; the guard step lets exactly one of
-# them through, whichever currently lands in the 07:00-08:30 ET window. The
-# window is deliberately wider than a minute because GitHub's scheduler runs
-# late under load -- better a refresh at 07:50 than none that day.
+#   pre_open   09:25  the state five minutes before the bell
+#   t_plus_5   09:35  five minutes in -- where the momentum shows
+#   t_plus_10  09:40  ten minutes in; this one also refreshes the dashboard
+#   close      15:55  five minutes before the bell, to label how the day ended
+#
+# Two problems shape the schedule below.
+#
+# GitHub cron is UTC-only, so each slot needs two entries -- one for EDT
+# (UTC-4) and one for EST (UTC-5) -- and only one of the pair may actually run.
+#
+# And GitHub's scheduler runs late under load, sometimes past ten minutes. With
+# slots five minutes apart, deciding "which measurement is this?" from the wall
+# clock would mislabel a delayed run. So the slot comes from
+# github.event.schedule -- the cron expression that fired -- which is exact
+# regardless of delay. The clock is then used only to reject the wrong-timezone
+# twin of the pair, which is always a full hour out.
 on:
   schedule:
-    - cron: "30 11 * * 1-5"
-    - cron: "30 12 * * 1-5"
-  workflow_dispatch: # manual runs skip the time guard entirely
+    - cron: "25 13 * * 1-5" # pre_open   EDT
+    - cron: "25 14 * * 1-5" # pre_open   EST
+    - cron: "35 13 * * 1-5" # t_plus_5   EDT
+    - cron: "35 14 * * 1-5" # t_plus_5   EST
+    - cron: "40 13 * * 1-5" # t_plus_10  EDT
+    - cron: "40 14 * * 1-5" # t_plus_10  EST
+    - cron: "55 19 * * 1-5" # close      EDT
+    - cron: "55 20 * * 1-5" # close      EST
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: "Slot to record (manual runs skip the schedule checks)"
+        type: choice
+        options: [manual, pre_open, t_plus_5, t_plus_10, close]
+        default: manual
+      refresh_board:
+        description: "Also update the dashboard"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
+# Slots are five minutes apart and both jobs push; serialise them so a delayed
+# run cannot race the next one into the same branch.
 concurrency:
   group: refresh-screener
   cancel-in-progress: false
@@ -28,6 +55,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The research archive lives on an orphan branch with no shared history,
+      # so Vercel never clones it and the site's build time stays flat as the
+      # dataset grows.
+      - uses: actions/checkout@v4
+        with:
+          ref: data
+          path: archive
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -35,34 +70,47 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Should this run fire?
-        id: guard
-        run: |
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          from datetime import datetime
+      - name: Resolve this run's slot
+        id: slot
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+          EVENT: ${{ github.event_name }}
+          MANUAL_SLOT: ${{ inputs.slot }}
+          MANUAL_BOARD: ${{ inputs.refresh_board }}
+        run: python .github/scripts/resolve_slot.py >> "$GITHUB_OUTPUT"
 
-          from warrior_screener.market_calendar import EASTERN, is_trading_day
-
-          now = datetime.now(EASTERN)
-          # A holiday is not a session: TradingView would happily serve the
-          # previous session's numbers, and the board would claim them as today's.
-          trading = is_trading_day(now.date())
-          in_window = (7, 0) <= (now.hour, now.minute) < (8, 30)
-          run = trading and in_window
-          print(f"run={'true' if run else 'false'}")
-          print(f"why=ET {now:%Y-%m-%d %H:%M %Z} trading_day={trading} in_window={in_window}")
-          PY
-
-      - name: Skipped
-        if: github.event_name == 'schedule' && steps.guard.outputs.run != 'true'
-        run: echo "Not the pre-open slot for this timezone -- ${{ steps.guard.outputs.why }}"
+      - name: Not this timezone's turn
+        if: steps.slot.outputs.run != 'true'
+        run: echo "Skipped -- ${{ steps.slot.outputs.why }}"
 
       - name: Run the screen
-        if: github.event_name != 'schedule' || steps.guard.outputs.run == 'true'
-        run: python -m warrior_screener snapshot --json data/today.json
+        if: steps.slot.outputs.run == 'true'
+        env:
+          SLOT: ${{ steps.slot.outputs.slot }}
+          DAY_DIR: archive/history/${{ steps.slot.outputs.day_path }}
+        run: |
+          python -m warrior_screener snapshot \
+            --slot "$SLOT" \
+            --archive "$DAY_DIR/$SLOT.csv" \
+            --carry-from "$DAY_DIR" \
+            ${{ steps.slot.outputs.refresh_board == 'true' && '--json data/today.json' || '' }}
 
-      - name: Commit the scan
-        if: github.event_name != 'schedule' || steps.guard.outputs.run == 'true'
+      - name: Commit the archive
+        if: steps.slot.outputs.run == 'true'
+        working-directory: archive
+        run: |
+          if git diff --quiet && git diff --staged --quiet && ! git status --porcelain | grep -q .; then
+            echo "No archive change to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add history
+          git commit -m "Archive ${{ steps.slot.outputs.slot }} for ${{ steps.slot.outputs.trade_date }}"
+          git push
+
+      - name: Commit the board
+        if: steps.slot.outputs.run == 'true' && steps.slot.outputs.refresh_board == 'true'
         run: |
           if git diff --quiet -- data/today.json; then
             echo "Screen produced no change; nothing to commit."
@@ -71,5 +119,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/today.json
-          git commit -m "Refresh screener for $(TZ=America/New_York date +%Y-%m-%d)"
+          git commit -m "Refresh screener for ${{ steps.slot.outputs.trade_date }}"
           git push

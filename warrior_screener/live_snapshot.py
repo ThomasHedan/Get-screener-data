@@ -42,62 +42,99 @@ def candidates_from_snapshot(
 ) -> list[Candidate]:
     """Apply the screen's price/change/volume filters to a live snapshot.
 
-    Mirrors :func:`warrior_screener.scanner.coarse_candidates`, adapted to a
-    snapshot row that already carries relative volume and float instead of
-    needing prior sessions and a reference lookup to compute them.
+    Adapted to a snapshot row that already carries relative volume and float
+    instead of needing prior sessions and a reference lookup to compute them.
     """
     trade_date = as_of or date.today()
     survivors: list[Candidate] = []
 
     for row in rows:
-        if not criteria.min_price <= row.close <= criteria.max_price:
+        if not passes_coarse_filters(row, criteria):
             continue
-        if row.volume < criteria.min_day_volume:
-            continue
-        if row.change_pct < criteria.min_change_pct:
-            continue
-
-        prev_close = row.prev_close
-        gap_pct = (row.open - prev_close) / prev_close * 100.0 if prev_close and row.open else None
-        if criteria.min_gap_pct is not None and (gap_pct is None or gap_pct < criteria.min_gap_pct):
-            continue
-
-        candidate = Candidate(
-            ticker=row.ticker,
-            trade_date=trade_date,
-            open=row.open,
-            high=row.high,
-            low=row.low,
-            close=row.close,
-            volume=row.volume,
-            prev_close=prev_close,
-            gap_pct=_round(gap_pct),
-            change_pct=_round(row.change_pct),
-            range_pct=_round((row.high - row.low) / row.low * 100.0 if row.low else None),
-            avg_volume=_round(row.average_volume, 1),
-            relative_volume=_round(row.relative_volume),
-            dollar_volume=_round(row.close * row.volume, 0),
-            security_type=SECURITY_TYPE_TO_POLYGON.get(row.security_type),
-            primary_exchange=row.exchange,
-            float_shares=int(row.float_shares) if row.float_shares else None,
-            shares_outstanding=int(row.float_shares) if row.float_shares else None,
-            market_cap=row.market_cap,
-            # No free bulk news source backs this path -- see the module
-            # docstring. news_checked stays False, never claim "no catalyst".
-            news_count=0,
-            news_checked=False,
-        )
-        survivors.append(candidate)
+        survivors.append(build_candidate(row, trade_date))
 
     return survivors
+
+
+def passes_coarse_filters(row: MarketSnapshotRow, criteria: Criteria) -> bool:
+    """The cheap price/volume/change gate every candidate must clear.
+
+    Split out from :func:`candidates_from_snapshot` so the archive can build a
+    row for a ticker that fails it -- a name carried over from an earlier slot
+    today is exactly a ticker that no longer qualifies, and dropping it would
+    leave the morning's runners with no closing figures.
+    """
+    if not criteria.min_price <= row.close <= criteria.max_price:
+        return False
+    if row.volume < criteria.min_day_volume:
+        return False
+    if row.change_pct < criteria.min_change_pct:
+        return False
+    if criteria.min_gap_pct is not None:
+        gap_pct = _gap_pct(row)
+        if gap_pct is None or gap_pct < criteria.min_gap_pct:
+            return False
+    return True
+
+
+def build_candidate(row: MarketSnapshotRow, trade_date: date) -> Candidate:
+    """Turn one snapshot row into a Candidate, filters already decided."""
+    prev_close = row.prev_close
+    gap_pct = _gap_pct(row)
+
+    return Candidate(
+        ticker=row.ticker,
+        trade_date=trade_date,
+        open=row.open,
+        high=row.high,
+        low=row.low,
+        close=row.close,
+        volume=row.volume,
+        prev_close=prev_close,
+        gap_pct=_round(gap_pct),
+        change_pct=_round(row.change_pct),
+        range_pct=_round((row.high - row.low) / row.low * 100.0 if row.low else None),
+        avg_volume=_round(row.average_volume, 1),
+        relative_volume=_round(row.relative_volume),
+        dollar_volume=_round(row.close * row.volume, 0),
+        security_type=SECURITY_TYPE_TO_POLYGON.get(row.security_type),
+        primary_exchange=row.exchange,
+        float_shares=int(row.float_shares) if row.float_shares else None,
+        shares_outstanding=int(row.float_shares) if row.float_shares else None,
+        market_cap=row.market_cap,
+        # No free bulk news source backs this path -- see the module
+        # docstring. news_checked stays False, never claim "no catalyst".
+        news_count=0,
+        news_checked=False,
+    )
+
+
+def _gap_pct(row: MarketSnapshotRow) -> float | None:
+    """Today's open against the previous close, in percent.
+
+    Only meaningful once the regular session has opened: before 09:30 ET
+    TradingView's ``open`` is not yet today's, so this reads as a gap that has
+    not happened. That is the reason the pre-open slot exists for research
+    rather than for the board.
+    """
+    prev_close = row.prev_close
+    if not prev_close or not row.open:
+        return None
+    return (row.open - prev_close) / prev_close * 100.0
 
 
 def screen_live(
     criteria: Criteria,
     *,
+    rows: list[MarketSnapshotRow] | None = None,
     exchange_allowlist: bool = True,
 ) -> ScanResult:
-    """Fetch a live TradingView snapshot and run the Warrior screen against it.
+    """Run the Warrior screen against a live TradingView snapshot.
+
+    ``rows`` lets a caller supply a snapshot it has already fetched, so the
+    board and the archive can be built from one request rather than two --
+    which also guarantees they describe the same instant. Omit it and the
+    snapshot is fetched here.
 
     ``exchange_allowlist`` restricts results to ``criteria.allowed_exchanges``;
     switch it off to see what the raw TradingView universe (which already
@@ -105,7 +142,8 @@ def screen_live(
     """
     from warrior_screener.scanner import ScanResult  # local import: avoid a cycle at module load
 
-    rows = fetch_market_snapshot()
+    if rows is None:
+        rows = fetch_market_snapshot()
     candidates = candidates_from_snapshot(rows, criteria)
 
     effective_criteria = criteria if exchange_allowlist else _without_exchange_filter(criteria)
