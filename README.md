@@ -87,6 +87,11 @@ pip install -r requirements.txt
 python -m warrior_screener snapshot                    # print the board
 python -m warrior_screener snapshot --no-news          # structural qualifiers as strict
 python -m warrior_screener snapshot --json             # write data/today.json
+
+# one archive slot, carrying forward anything already recorded today
+python -m warrior_screener snapshot \
+  --slot t_plus_10 --archive history/2026/09/09/t_plus_10.csv \
+  --carry-from history/2026/09/09
 ```
 
 Then the dashboard:
@@ -121,30 +126,112 @@ python -m warrior_screener snapshot --strict-only        # never pad to min_in_p
 
 ## The daily refresh
 
-`.github/workflows/refresh.yml` runs the screen at **07:30 ET on weekdays**, two
-hours before the open, and commits `data/today.json`.
+`.github/workflows/refresh.yml` runs the screen four times a trading day, all
+times Eastern:
 
-GitHub cron is UTC-only, so 07:30 ET is two entries plus a guard rather than one
-line: 11:30 UTC is 07:30 EDT but 06:30 EST, and 12:30 UTC is the reverse. Both
-fire year-round and the guard lets exactly one through — whichever currently
-lands in the 07:00–08:30 ET window. The window is wider than a minute because
-GitHub's scheduler runs late under load; a refresh at 07:50 beats none. Market
-holidays are skipped via `market_calendar.is_trading_day`.
+| slot | time | what it is for |
+|------|------|----------------|
+| `pre_open` | 09:25 | the watchlist five minutes before the bell |
+| `t_plus_5` | 09:35 | five minutes in, where the momentum declares itself |
+| `t_plus_10` | 09:40 | ten minutes in; the view the page opens on |
+| `close` | 15:55 | five minutes before the bell, to label how the day ended |
 
-Two things to know:
+All four publish to the dashboard as **separate views**, switchable from the
+tab row. They are kept apart rather than merged because their numbers are not
+comparable: before 09:30 the gap column is meaningless (TradingView's `open` is
+not yet today's) and thinly traded names still carry yesterday's figures, while
+a 900× relative volume at 09:35 means something quite different from 900× at
+15:55. Each view carries a caption saying what it is, and the pre-open one says
+plainly that it is a watchlist rather than prices.
 
-- **Scheduled workflows only run from the repository's default branch.** The
-  cron will not fire while this lives on a feature branch — merge it first, or
-  trigger it by hand from the Actions tab (`workflow_dispatch` skips the time
-  guard).
-- **Update `US_MARKET_HOLIDAYS` every January** in
-  `warrior_screener/market_calendar.py`. There is no free unauthenticated bulk
-  calendar API, so the list is hardcoded; a date past its coverage falls back to
-  "any weekday is a trading day".
+The page opens on `t_plus_10`, falling back to the most recent slot available —
+so before 09:40 you land on the pre-open board rather than on an empty tab.
 
-To refresh more often than once a day, add cron entries and widen the guard
-window. Vercel's own cron on the Hobby plan is once-daily, which is why the
-schedule lives in Actions.
+### Why the schedule looks the way it does
+
+GitHub cron is UTC-only, so each slot needs two entries — one for EDT, one for
+EST — of which exactly one may run. And GitHub's scheduler runs late under
+load, sometimes past ten minutes, which matters when slots sit five minutes
+apart: reading the clock would relabel a delayed 09:35 run as the 09:40 one.
+
+So the slot comes from `github.event.schedule` — the cron expression that
+fired — and is exact regardless of delay. The clock is used only to reject the
+wrong-timezone twin, which is always a full hour out. That logic lives in
+`warrior_screener/slots.py` rather than in the YAML precisely so it can be
+tested: `tests/test_slots.py` asserts that every slot fires exactly once per
+day in both halves of the year, which is the property that would otherwise
+break silently at each daylight-saving switch.
+
+Market holidays are skipped via `market_calendar.is_trading_day`. **Update
+`US_MARKET_HOLIDAYS` every January** — there is no free unauthenticated bulk
+calendar API, so the list is hardcoded, and a date past its coverage falls back
+to "any weekday is a trading day".
+
+Scheduled workflows only run from the repository's default branch. To trigger a
+slot by hand, use the Actions tab: `workflow_dispatch` takes the slot name and
+skips every schedule check.
+
+---
+
+## The research archive
+
+Every slot also writes a CSV to the **`data` branch** — an orphan branch with
+no shared history, so Vercel never clones it and the site's build time stays
+flat as the dataset grows.
+
+```
+history/YYYY/MM/DD/<slot>.csv
+```
+
+The branch's own README documents the full column contract. Three properties
+matter if you are going to model on it:
+
+**Tickers are carried across slots.** Each file holds the candidates found at
+that instant *plus* every ticker that qualified earlier the same day, even once
+it no longer passes the gate. Without that, a name that ran 60% at 09:35 and
+faded by the close would be absent from the closing file — and a morning
+feature with no closing figure cannot become a label. Carried rows are marked
+`qualification = carried` and carry no score, since the score is a percentile
+rank inside a live pool they are no longer part of.
+
+**Both the intended slot and the real timestamp are recorded**, for the
+scheduler-delay reason above.
+
+**Only screened candidates are archived**, not the whole universe. That is
+enough to study how already-selected momentum names behave through a session,
+and not enough to learn the selection itself — there are no negative examples.
+Widening it to the full ~6,000-row universe is a one-line change in the
+workflow.
+
+---
+
+## The dashboard
+
+`data/today.json` holds the day's slots side by side:
+
+```json
+{
+  "trade_date": "2026-09-10",
+  "updated_at": "2026-09-10T09:40:03-04:00",
+  "criteria": { "...": "the thresholds this scan used" },
+  "slots": {
+    "pre_open":  { "generated_at": "...", "session_phase": "pre-market", "in_play": [] },
+    "t_plus_10": { "generated_at": "...", "session_phase": "regular",    "in_play": [] }
+  }
+}
+```
+
+Each run merges its own slot and leaves the others alone. When the file is from
+an earlier session it is replaced wholesale rather than merged — yesterday's
+pre-open board sitting in a tab next to today's would be indistinguishable from
+a live one.
+
+The page is a static export, so every label on it describes the moment the scan
+ran, not the moment you are reading it. `app/StaleNotice.tsx` closes that gap:
+it compares the payload's date against the browser's own Eastern date on mount
+and, if they differ, says so in red above the board. Without it, opening the
+site at 08:00 would show yesterday's closing board wearing a green "Open"
+badge.
 
 ---
 
@@ -174,10 +261,16 @@ warrior_screener/
   config.py            criteria + settings, loaded from config/criteria.yml
   market_calendar.py   is the market open, and is this data actually today's
   models.py            Candidate and friends
+  archive.py           the per-slot research CSV, and the carry-forward rule
+  slots.py             which measurement a scheduled run is, and whether it runs
   providers/
     tradingview.py     the one HTTP call, and its column mapping
-app/                   the dashboard (page.tsx, layout.tsx, globals.css)
-lib/screener.ts        the payload's TypeScript shape and formatting helpers
+app/                   the dashboard
+  page.tsx             server component: masthead, criteria, footnotes
+  Board.tsx            client: the slot tabs and the table
+  StaleNotice.tsx      client: "these are not today's numbers"
+lib/format.ts          types, slot captions and formatters (browser-safe)
+lib/screener.ts        reads data/today.json at build time (server only)
 data/today.json        the committed scan the page renders
 ```
 
@@ -202,7 +295,7 @@ one.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest          # 111 tests, no network, no API key
+pytest          # 150 tests, no network, no API key
 ruff check .
 ```
 

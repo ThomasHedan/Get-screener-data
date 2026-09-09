@@ -52,6 +52,24 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot_cmd.add_argument(
         "--quiet", action="store_true", help="Write the JSON without printing the table"
     )
+    snapshot_cmd.add_argument(
+        "--archive",
+        metavar="PATH",
+        help="Also write this slot's candidates to a CSV for the research archive",
+    )
+    snapshot_cmd.add_argument(
+        "--slot",
+        default="manual",
+        help="Label for the archived measurement (e.g. pre_open, t_plus_5); default 'manual'",
+    )
+    snapshot_cmd.add_argument(
+        "--carry-from",
+        metavar="DIR",
+        help=(
+            "Directory of this day's earlier slot CSVs; every ticker in them is "
+            "archived again even if it no longer qualifies"
+        ),
+    )
     _add_criteria_flags(snapshot_cmd)
 
     return parser
@@ -112,10 +130,15 @@ def _settings_from_args(args: argparse.Namespace) -> Settings:
 def _cmd_snapshot(args: argparse.Namespace) -> int:
     """Screen the live TradingView snapshot: print it, write JSON, or both."""
     settings = _settings_from_args(args)
-    from warrior_screener.live_snapshot import screen_live
+    from warrior_screener import live_snapshot
 
     try:
-        result = screen_live(settings.criteria)
+        # One fetch feeds both outputs, so the board and the archived slot
+        # describe the same instant rather than two requests seconds apart.
+        # Resolved through the module rather than imported by name, so there is
+        # a single place to patch the network out.
+        rows = live_snapshot.fetch_market_snapshot()
+        result = live_snapshot.screen_live(settings.criteria, rows=rows)
     except TradingViewError as exc:
         logger.error("%s", exc)
         return 1
@@ -139,9 +162,57 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
         )
 
     if args.json is not None:
-        path = _write_json(Path(args.json), result, now_et, phase, notice, settings)
+        path = _write_json(Path(args.json), result, now_et, phase, notice, settings, args.slot)
         print(f"Wrote {path}")
+
+    if args.archive:
+        path = _write_archive(args, rows, result, now_et, settings)
+        print(f"Archived {path}")
     return 0
+
+
+def _write_archive(
+    args: argparse.Namespace,
+    rows: list[Any],
+    result: Any,
+    now_et: datetime,
+    settings: Settings,
+) -> Path:
+    """Write this slot's candidates, plus anything carried from earlier today.
+
+    The carried names are the point of the exercise: a ticker that ran at 09:35
+    and faded by the close only has a usable outcome if the closing slot still
+    records it. See warrior_screener.archive for the full rationale.
+    """
+    from warrior_screener import archive
+    from warrior_screener.live_snapshot import build_candidate
+    from warrior_screener.scanner import evaluate
+
+    trade_date = result.trade_date
+    archived = list(result.candidates)
+    already = {candidate.ticker for candidate in archived}
+
+    carried_tickers = archive.tickers_seen(Path(args.carry_from)) if args.carry_from else set()
+    for row in rows:
+        if row.ticker not in carried_tickers or row.ticker in already:
+            continue
+        # Anything reaching here failed the price/change/volume gate at this
+        # instant -- a ticker that passed it is already in result.candidates.
+        # Keep its reject reasons, but never let it carry a score: the score is
+        # a percentile rank inside the live pool, which this row is not part of.
+        candidate = build_candidate(row, trade_date)
+        candidate.rejected_by = evaluate(candidate, settings.criteria)
+        candidate.qualification = archive.CARRIED
+        archived.append(candidate)
+
+    return archive.write_slot(
+        Path(args.archive),
+        archived,
+        slot=args.slot,
+        captured_at=now_et,
+        in_play={candidate.ticker for candidate in result.in_play},
+        sectors={row.ticker: row.sector for row in rows},
+    )
 
 
 def _staleness_notice(now_et: datetime, phase: str) -> str | None:
@@ -186,35 +257,63 @@ def _write_json(
     phase: str,
     notice: str | None,
     settings: Settings,
+    slot: str,
 ) -> Path:
-    """Serialise a scan for the dashboard, staleness and criteria included.
+    """Merge this slot's board into the dashboard's payload.
 
-    The page is a static read of this file, so anything it needs to render an
-    honest screen has to be in here -- including *when* this ran and whether
-    the market was open at the time. A dashboard that cannot tell a live board
-    from yesterday's leftovers is worse than no dashboard.
+    The page shows the day's slots side by side -- the pre-open watchlist and
+    the ten-minutes-in board are different questions and a trader wants both --
+    so each run updates its own slot and leaves the others alone. When the file
+    is from an earlier session it is replaced wholesale rather than merged:
+    yesterday's pre-open board sitting in a tab next to today's would be
+    indistinguishable from a live one.
+
+    Everything the page needs to render honestly lives in here, including when
+    each slot ran and whether the market was open at the time. A dashboard that
+    cannot tell a live board from yesterday's leftovers is worse than none.
     """
     criteria = settings.criteria
-    payload = {
+    trade_date = result.trade_date.isoformat()
+
+    payload = _existing_payload(path)
+    if payload.get("trade_date") != trade_date:
+        payload = {"trade_date": trade_date, "slots": {}}
+
+    payload["updated_at"] = now_et.isoformat(timespec="seconds")
+    payload["criteria"] = {
+        "min_change_pct": criteria.min_change_pct,
+        "min_price": criteria.min_price,
+        "max_price": criteria.max_price,
+        "min_relative_volume": criteria.min_relative_volume,
+        "max_float_shares": criteria.max_float_shares,
+        "min_day_volume": criteria.min_day_volume,
+        "require_news_catalyst": criteria.require_news_catalyst,
+    }
+    payload.setdefault("slots", {})[slot] = {
         "generated_at": now_et.isoformat(timespec="seconds"),
-        "trade_date": result.trade_date.isoformat(),
         "session_phase": phase,
         "notice": notice,
         "stats": result.stats,
-        "criteria": {
-            "min_change_pct": criteria.min_change_pct,
-            "min_price": criteria.min_price,
-            "max_price": criteria.max_price,
-            "min_relative_volume": criteria.min_relative_volume,
-            "max_float_shares": criteria.max_float_shares,
-            "min_day_volume": criteria.min_day_volume,
-            "require_news_catalyst": criteria.require_news_catalyst,
-        },
         "in_play": [_json_row(candidate) for candidate in result.in_play],
     }
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def _existing_payload(path: Path) -> dict[str, Any]:
+    """Today's payload as already written, or an empty one.
+
+    A corrupt or half-written file must not take the next slot down with it:
+    the run that would have fixed the board is exactly the one being asked to
+    parse it. Start fresh instead.
+    """
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _json_row(candidate: Any) -> dict[str, Any]:

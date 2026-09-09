@@ -117,6 +117,88 @@ body {
   font-size: 14px;
 }
 
+/* A harder red than the amber advisory: this one says the numbers are not
+   today's, which is a different order of problem from a pre-market caveat. */
+.notice-stale {
+  border-color: rgba(255, 107, 107, 0.45);
+  background: #3a1a1a;
+  color: #ffb4b4;
+  font-weight: 500;
+}
+
+/* Pre-open figures are advisory, not wrong -- a softer note than the red one
+   that says the whole board is from another day. */
+.notice-preopen {
+  border-color: rgba(240, 180, 41, 0.35);
+}
+
+/* --------------------------------------------------------------------- Slots */
+
+.slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.slot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.slot:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+}
+
+.slot-active,
+.slot-active:hover {
+  border-color: var(--border);
+  background: var(--panel-raised);
+  color: var(--text);
+}
+
+.slot-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.slot-time {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+  letter-spacing: 0.03em;
+}
+
+.slot-caption {
+  margin: 14px 0 0;
+  max-width: 78ch;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.slot-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 14px 0 16px;
+}
+
 /* ------------------------------------------------------------------ Criteria */
 
 .criteria {
@@ -124,6 +206,11 @@ body {
   flex-wrap: wrap;
   gap: 8px;
   margin: 24px 0;
+}
+
+.qual-carried {
+  color: var(--faint);
+  font-style: italic;
 }
 
 .chip {
