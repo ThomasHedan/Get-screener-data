@@ -150,10 +150,17 @@ schedule lives in Actions.
 
 ## Deploying
 
-The site is a Next.js static export, so Vercel needs no configuration beyond
-importing the repository — the framework preset builds `app/` and serves `out/`.
-Every push that changes `data/today.json` triggers a redeploy, which is how the
-board stays current without a server.
+The site is a Next.js static export. `vercel.json` pins
+`"framework": "nextjs"`, which matters here: this repository was Python-only
+when its Vercel project was first created, so the project's saved preset is
+`python` and the build fails with *"No python entrypoint found"* until
+something overrides it. Settings in `vercel.json` take precedence over the
+dashboard preset, so the fix travels with the repo instead of living in one
+person's project settings.
+
+Beyond that, importing the repository is the whole setup. Every push that
+changes `data/today.json` triggers a redeploy, which is how the board stays
+current without a server.
 
 ---
 
