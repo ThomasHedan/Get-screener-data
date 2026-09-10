@@ -2,13 +2,13 @@
 
 A dashboard of the low-float momentum stocks that are **in play** — the Ross
 Cameron / Warrior Trading gap-and-go profile — screened from the whole US
-market in a single request, refreshed two hours before the open, and deployed
-as a static page on Vercel.
+market in a single request, rescanned every few minutes through the session
+and served from three containers you can run anywhere.
 
 The screen is Python (`warrior_screener/`). The board is a Next.js page
-(`app/`). Between them is one committed file, `data/today.json`: the screener
-writes it, a GitHub Actions workflow commits it, and that push is what
-redeploys the site.
+(`app/`). Between them is a shared volume: the extractor publishes
+`today.json` on a schedule it controls, and the board reads it on every
+request. See [DEPLOY.md](DEPLOY.md).
 
 ---
 
@@ -119,48 +119,47 @@ python -m warrior_screener snapshot --strict-only        # never pad to min_in_p
 
 ---
 
-## The daily refresh
+## The refresh loop
 
-`.github/workflows/refresh.yml` runs the screen at **07:30 ET on weekdays**, two
-hours before the open, and commits `data/today.json`.
+`warrior_screener/scheduler.py` screens the market every
+`SCAN_INTERVAL_SECONDS` (default 300) whenever a US session is live —
+pre-market 04:00 ET through after-hours 20:00 ET, trading days only — and
+publishes each result to `SCREENER_DATA_DIR`: `today.json` for the board, plus
+a timestamped copy under `history/` so a session can be replayed.
 
-GitHub cron is UTC-only, so 07:30 ET is two entries plus a guard rather than one
-line: 11:30 UTC is 07:30 EDT but 06:30 EST, and 12:30 UTC is the reverse. Both
-fire year-round and the guard lets exactly one through — whichever currently
-lands in the 07:00–08:30 ET window. The window is wider than a minute because
-GitHub's scheduler runs late under load; a refresh at 07:50 beats none. Market
-holidays are skipped via `market_calendar.is_trading_day`.
+It replaced a GitHub Actions cron for a reason worth recording. That schedule
+was best-effort: on 2026-09-10 a correctly configured, active workflow never
+fired once, and since a commit was the only path to fresh data, the board
+showed the previous session with nothing to indicate anything had gone wrong.
+A scheduler that owns its own clock removes that whole class of failure — a
+missed scan now costs one scan, and the next tick is five minutes away.
 
-Two things to know:
+`.github/workflows/refresh.yml` survives as `workflow_dispatch` only: a manual
+escape hatch that no longer competes with the extractor for `data/today.json`.
 
-- **Scheduled workflows only run from the repository's default branch.** The
-  cron will not fire while this lives on a feature branch — merge it first, or
-  trigger it by hand from the Actions tab (`workflow_dispatch` skips the time
-  guard).
-- **Update `US_MARKET_HOLIDAYS` every January** in
-  `warrior_screener/market_calendar.py`. There is no free unauthenticated bulk
-  calendar API, so the list is hardcoded; a date past its coverage falls back to
-  "any weekday is a trading day".
-
-To refresh more often than once a day, add cron entries and widen the guard
-window. Vercel's own cron on the Hobby plan is once-daily, which is why the
-schedule lives in Actions.
+**Update `US_MARKET_HOLIDAYS` every January** in
+`warrior_screener/market_calendar.py`. There is no free unauthenticated bulk
+calendar API, so the list is hardcoded; a date past its coverage falls back to
+"any weekday is a trading day".
 
 ---
 
 ## Deploying
 
-The site is a Next.js static export. `vercel.json` pins
-`"framework": "nextjs"`, which matters here: this repository was Python-only
-when its Vercel project was first created, so the project's saved preset is
-`python` and the build fails with *"No python entrypoint found"* until
-something overrides it. Settings in `vercel.json` take precedence over the
-dashboard preset, so the fix travels with the repo instead of living in one
-person's project settings.
+Three containers — `extractor`, `web`, `caddy` — on a private network, with
+Caddy the only one publishing a port:
 
-Beyond that, importing the repository is the whole setup. Every push that
-changes `data/today.json` triggers a redeploy, which is how the board stays
-current without a server.
+```bash
+cp .env.example .env      # set SCREENER_DOMAIN
+docker compose up -d --build
+```
+
+Full instructions, including Oracle Cloud Always Free and GCP `e2-micro`
+(and the host-firewall step on Oracle that silently drops 80/443), are in
+[DEPLOY.md](DEPLOY.md).
+
+The board no longer depends on a rebuild to show a new scan, so a deploy is
+only needed when the code changes.
 
 ---
 

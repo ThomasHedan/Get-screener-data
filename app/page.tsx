@@ -9,9 +9,11 @@ import {
   type InPlayRow,
 } from "@/lib/screener";
 
-// The scan is a committed file, so the page is fully static: it is rebuilt when
-// the refresh workflow pushes a new data/today.json, and never on page view.
-export const dynamic = "force-static";
+// Read the extractor's latest scan on every request. Caching here would be
+// the one thing the board must not do: someone checking the screen five
+// minutes after the open needs what the last scan found, not what was cached
+// before it ran. The read is one small local JSON file.
+export const dynamic = "force-dynamic";
 
 export default async function Page() {
   const board = await loadScreener();

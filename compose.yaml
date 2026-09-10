@@ -1,0 +1,61 @@
+# Three services on one private network, one door to the internet.
+#
+#   extractor -> writes scans to a shared volume, no port, no inbound access
+#   web       -> reads that volume read-only, reachable only from caddy
+#   caddy     -> the only service publishing ports; terminates TLS
+#
+# Compose puts these on a default bridge network of their own. Only the ports
+# listed under caddy are reachable from outside the host, so the screener and
+# the dashboard have no exposed surface at all.
+
+services:
+  extractor:
+    build:
+      context: .
+      dockerfile: docker/extractor.Dockerfile
+    restart: unless-stopped
+    environment:
+      # Every 5 minutes by default, and only while a US session is live.
+      SCAN_INTERVAL_SECONDS: ${SCAN_INTERVAL_SECONDS:-300}
+    volumes:
+      - screener-data:/data
+    logging: &logging
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    restart: unless-stopped
+    volumes:
+      # Read-only: the board renders scans, it never produces them.
+      - screener-data:/data:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SCREENER_DOMAIN: ${SCREENER_DOMAIN:-:80}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data      # certificates -- losing this re-requests them
+      - caddy-config:/config
+    depends_on:
+      - web
+    logging: *logging
+
+volumes:
+  screener-data:
+  caddy-data:
+  caddy-config:

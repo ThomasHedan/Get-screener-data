@@ -1,0 +1,7 @@
+# The only service reachable from the internet. Set SCREENER_DOMAIN to a real
+# hostname and Caddy provisions and renews a Let's Encrypt certificate on its
+# own; leave it at the default :80 to test over plain HTTP against an IP.
+{$SCREENER_DOMAIN} {
+	encode gzip
+	reverse_proxy web:3000
+}

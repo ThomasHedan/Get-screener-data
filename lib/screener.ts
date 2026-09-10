@@ -69,15 +69,20 @@ const EMPTY: ScreenerPayload = {
 };
 
 /**
- * Read the scan written by the refresh workflow.
+ * Read the scan the extractor last published.
  *
- * A missing or unparseable file is an empty board, never a build failure: the
- * page's whole job is to say what the screen found, and "nothing has run yet"
- * is a truthful answer it can render.
+ * SCREENER_DATA_DIR is the volume the extractor writes to, so a new scan shows
+ * up on the next request with no rebuild and no deploy. It falls back to the
+ * repo's own data/ so `npm run dev` works against a local `snapshot --json`.
+ *
+ * A missing or unparseable file is an empty board, never a failure: the page's
+ * whole job is to say what the screen found, and "nothing has run yet" is a
+ * truthful answer it can render.
  */
 export async function loadScreener(): Promise<ScreenerPayload> {
   try {
-    const file = path.join(process.cwd(), "data", "today.json");
+    const dir = process.env.SCREENER_DATA_DIR ?? path.join(process.cwd(), "data");
+    const file = path.join(dir, "today.json");
     const parsed = JSON.parse(await readFile(file, "utf8")) as Partial<ScreenerPayload>;
     return { ...EMPTY, ...parsed, in_play: parsed.in_play ?? [] };
   } catch {
