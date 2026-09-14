@@ -144,6 +144,46 @@ calendar API, so the list is hardcoded; a date past its coverage falls back to
 
 ---
 
+## Capturing a session for analysis
+
+`warrior_screener/checkpoints.py` captures the screen at fixed points in one
+session and leaves the results on disk for you to look at. It is a hand-run
+tool, separate from the scheduler that feeds the board.
+
+```bash
+python -m warrior_screener.checkpoints --test   # is the endpoint reachable?
+python -m warrior_screener.checkpoints          # run today's checkpoints
+python -m warrior_screener.checkpoints --now    # capture once, right now
+```
+
+Run `--test` first. The endpoint is undocumented and unauthenticated, so it can
+fail by being blocked, by changing shape, or by simply no longer answering —
+all cheaper to discover before the open than at 09:35.
+
+Default checkpoints, in Eastern (the market's own clock, so they survive both
+DST changes rather than drifting when Paris and New York switch on different
+dates):
+
+| ET | Paris | Label |
+|---|---|---|
+| 09:25 | 15:25 | `pre-open` |
+| 09:35 | 15:35 | `open+5` — the gap-and-go window |
+| 10:30 | 16:30 | `open+60` |
+| 16:00 | 22:00 | `close` — full regular-session volume |
+
+Override with `--at "09:25,09:35,16:00"`.
+
+Results land in `data/checkpoints/<date>/` — one JSON per capture with the full
+payload, plus `summary.csv` flattening every in-play row across all of them.
+The CSV is the file to open when comparing 09:35 against the close. Nothing
+under `data/` is committed, so captures stay local.
+
+At 16:00 sharp the phase reads `after-hours`: the regular session runs up to
+but not through 16:00. The label is cosmetic — the data is the complete
+session.
+
+---
+
 ## Deploying
 
 Three containers — `extractor`, `web`, `caddy` — on a private network, with
