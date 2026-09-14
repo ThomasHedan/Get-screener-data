@@ -147,15 +147,66 @@ def capture(settings: Settings, label: str, output_dir: Path) -> dict[str, Any] 
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     logger.info(
-        "[%s] %s -- %d in play of %d scanned -> %s",
+        "[%s] %s %s -- %d in play of %d scanned",
         label,
+        now_et.strftime("%H:%M ET"),
         phase,
         len(payload["in_play"]),
         payload["stats"]["universe_rows"],
-        path,
     )
+    if payload["notice"]:
+        logger.warning("  %s", payload["notice"])
+    _log_in_play(payload)
+    logger.info("  -> %s", path)
+
     _append_summary(payload, day_dir / "summary.csv")
     return payload
+
+
+_ROW_FORMAT = "  %-6s %8s %8s %8s %9s %13s %12s %6s  %s"
+
+
+def _fmt(value: Any, kind: str) -> str:
+    if value is None:
+        return "-"
+    if kind == "pct":
+        return f"{value:+.1f}%"
+    if kind == "mult":
+        # Time-of-day-normalized RVOL runs to four digits just after the open.
+        return f"{value:,.0f}x" if value >= 100 else f"{value:.1f}x"
+    if kind == "count":
+        return f"{int(value):,}"
+    return f"{value:.2f}"
+
+
+def _log_in_play(payload: dict[str, Any]) -> None:
+    """Log every in-play name and the figures it qualified on.
+
+    The count on its own is the one number that never tells you whether the
+    screen did something sensible. At 09:35 what you actually read is the
+    names -- so they go in the log, not only in the file.
+    """
+    rows = payload["in_play"]
+    if not rows:
+        logger.info("  (nothing in play: the screen ran and selected no candidate)")
+        return
+
+    logger.info(
+        _ROW_FORMAT, "TICKER", "CLOSE", "CHG%", "GAP%", "RVOL", "VOLUME", "FLOAT", "SCORE", "QUAL"
+    )
+    for row in rows:
+        logger.info(
+            _ROW_FORMAT,
+            row["ticker"],
+            _fmt(row["close"], "price"),
+            _fmt(row["change_pct"], "pct"),
+            _fmt(row["gap_pct"], "pct"),
+            _fmt(row["relative_volume"], "mult"),
+            _fmt(row["volume"], "count"),
+            _fmt(row["float_shares"], "count"),
+            _fmt(row["score"], "price"),
+            row["qualification"],
+        )
 
 
 def _append_summary(payload: dict[str, Any], path: Path) -> None:
@@ -197,6 +248,17 @@ def run_session(settings: Settings, checkpoints: tuple[Checkpoint, ...], output_
     if not market_calendar.is_trading_day(now_et.date()):
         logger.error("%s is not a trading day; nothing to capture.", now_et.date())
         return 1
+
+    # Probe before settling in to wait. The first checkpoint can be hours out,
+    # and finding out then that the endpoint is gone wastes the session.
+    logger.info("--- endpoint check ---")
+    if probe() != 0:
+        logger.warning(
+            "Endpoint check failed. Staying up anyway: the first capture may be hours "
+            "away and the endpoint may recover by then, and each capture reports its "
+            "own failure. Stop with Ctrl-C if you would rather fix it first."
+        )
+    logger.info("--- checkpoints ---")
 
     captured = 0
     for checkpoint in checkpoints:

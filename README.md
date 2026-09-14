@@ -156,9 +156,24 @@ python -m warrior_screener.checkpoints          # run today's checkpoints
 python -m warrior_screener.checkpoints --now    # capture once, right now
 ```
 
-Run `--test` first. The endpoint is undocumented and unauthenticated, so it can
-fail by being blocked, by changing shape, or by simply no longer answering —
-all cheaper to discover before the open than at 09:35.
+A session run **probes the endpoint at launch** and logs the result before
+settling in to wait — the first checkpoint can be hours out, and finding out
+then that the endpoint is gone wastes the session. A failed probe warns loudly
+but does not abort: the endpoint may recover before the first capture, and
+every capture reports its own failure. `--test` runs just that probe. `--now`
+skips it, since the capture is itself the test.
+
+Every capture logs the in-play names and the figures they qualified on, not
+just how many there were:
+
+```
+[open+5] 09:35 ET regular -- 3 in play of 6098 scanned
+  TICKER    CLOSE     CHG%     GAP%      RVOL        VOLUME        FLOAT  SCORE  QUAL
+  YMAT       1.87   +41.1%   +41.9%      982x    27,712,076    1,578,152   0.77  relaxed
+  SUNE       3.54   +49.4%   +27.0%     27.4x    53,403,800    5,442,061   0.66  relaxed
+```
+
+A staleness notice, when there is one, is logged as a warning above the table.
 
 Default checkpoints, in Eastern (the market's own clock, so they survive both
 DST changes rather than drifting when Paris and New York switch on different
