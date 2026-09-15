@@ -17,6 +17,23 @@ min_change_pct: 10.0
 # kept and stored with an empty gap -- "unknown" is not "did not gap".
 min_gap_pct: 0.0
 
+# --- Intraday momentum: the move since the bell, gap excluded.
+# At the 09:35 capture this IS the first five minutes. min_change_pct above
+# cannot express that: it measures from yesterday's close, so a name that
+# gapped +40% and has gone nowhere since 09:30 still reads +40% and outranks a
+# name that gapped +5% and then ripped +25% in five minutes.
+#   0.0   trading above its open -- holding the gap rather than giving it back
+#   3.0   demand a real push off the open
+#   null  off
+# Pre-open a name has no regular-session open, so this is unknown and the name
+# is kept -- same rule as min_gap_pct.
+min_open_change_pct: null
+
+# --- Where it sits in the day's range: 0 on the low, 1 on the high.
+# 0.5 keeps only the upper half. The cheapest guard against buying a mover that
+# is already being sold into. null disables.
+min_range_position: null
+
 # --- Volume: real liquidity, and at least 5x its own normal.
 # TradingView's relative volume is time-of-day normalized (volume so far today
 # vs. the average traded by this clock time over the past 10 sessions), not a
@@ -51,3 +68,6 @@ weight_relative_volume: 0.40
 weight_change_pct: 0.30
 weight_float: 0.20  # smaller float ranks higher
 weight_news: 0.10
+# Rank on the move since the open. Raise it (and lower weight_change_pct) to
+# rank intraday momentum above overnight gap size. 0.0 leaves ranking as it was.
+weight_open_change: 0.0

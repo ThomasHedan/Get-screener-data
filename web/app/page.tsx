@@ -66,6 +66,7 @@ function BoardRow({ row, rank }: { row: Row; rank: number }) {
       <td className="num">{price(row.close)}</td>
       <td className={`num ${tone(row.changePct)}`}>{percent(row.changePct)}</td>
       <td className={`num ${tone(row.gapPct)}`}>{percent(row.gapPct)}</td>
+      <td className={`num ${tone(row.openChangePct)}`}>{percent(row.openChangePct)}</td>
       <td className="num">{multiple(row.relativeVolume)}</td>
       <td className="num">{compact(row.volume)}</td>
       <td className="num">{compact(row.floatShares)}</td>
@@ -140,6 +141,9 @@ export default async function Page() {
                   <th>Close</th>
                   <th>Chg</th>
                   <th>Gap</th>
+                  <th title="Move since the 09:30 open, overnight gap excluded">
+                    Since open
+                  </th>
                   <th>RVOL</th>
                   <th>Volume</th>
                   <th>Float</th>

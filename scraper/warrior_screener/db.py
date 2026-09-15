@@ -34,10 +34,10 @@ _UPSERT_TICKER = """
 """
 
 _INSERT_IN_PLAY = """
-    INSERT INTO in_play (scan_id, symbol, close, change_pct, gap_pct, relative_volume,
-                         volume, average_volume, float_shares, market_cap,
-                         score, qualification)
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    INSERT INTO in_play (scan_id, symbol, close, change_pct, gap_pct, open_change_pct,
+                         range_position, relative_volume, volume, average_volume,
+                         float_shares, market_cap, score, qualification)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 
@@ -166,6 +166,8 @@ def _in_play_row(scan_id: int, candidate: Any) -> tuple[Any, ...]:
         candidate.close,
         candidate.change_pct,
         candidate.gap_pct,
+        candidate.open_change_pct,
+        candidate.range_position,
         candidate.relative_volume,
         candidate.volume,
         round(candidate.avg_volume) if candidate.avg_volume is not None else None,

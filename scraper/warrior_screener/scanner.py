@@ -117,11 +117,13 @@ def score_candidates(candidates: Sequence[Candidate], criteria: Criteria) -> Non
     float_ranks = _percentile_ranks(
         [(-float(c.float_shares) if c.float_shares else None) for c in candidates]
     )
+    open_change_ranks = _percentile_ranks([c.open_change_pct for c in candidates])
     weights = (
         criteria.weight_relative_volume,
         criteria.weight_change_pct,
         criteria.weight_float,
         criteria.weight_news,
+        criteria.weight_open_change,
     )
     total_weight = sum(weights) or 1.0
 
@@ -132,6 +134,7 @@ def score_candidates(candidates: Sequence[Candidate], criteria: Criteria) -> Non
             + criteria.weight_change_pct * change_ranks[index]
             + criteria.weight_float * float_ranks[index]
             + criteria.weight_news * news_score
+            + criteria.weight_open_change * open_change_ranks[index]
         )
         candidate.score = round(raw / total_weight, 4)
 

@@ -61,10 +61,9 @@ class TestCandidateConstruction:
         assert stock.security_type == "CS"
         assert adr.security_type == "ADRC"
 
-    def test_float_and_shares_outstanding_both_carry_the_same_proxy(self, criteria):
+    def test_float_is_carried_through(self, criteria):
         candidate = candidates_from_snapshot([make_row(float_shares=5_000_000.0)], criteria)[0]
         assert candidate.float_shares == 5_000_000
-        assert candidate.shares_outstanding == 5_000_000
 
     def test_missing_float_is_none_not_zero(self, criteria):
         candidate = candidates_from_snapshot([make_row(float_shares=None)], criteria)[0]
@@ -124,3 +123,59 @@ class TestExchangeMapping:
         # the exchange check silently (see TestParsing in test_tradingview.py).
         candidate = candidates_from_snapshot([make_row(exchange="XNAS")], criteria)[0]
         assert "exchange" not in evaluate(candidate, criteria)
+
+
+class TestIntradayMomentum:
+    """The move since the open, which is what the 09:35 capture is taken for."""
+
+    def test_open_change_excludes_the_overnight_gap(self, criteria):
+        # Gapped to 10.00 at the bell, trades 11.00 five minutes later: the
+        # first five minutes are +10%, whatever yesterday's close was.
+        row = make_row(open=10.0, close=11.0, high=11.2, low=9.9, change_pct=120.0)
+        candidate = candidates_from_snapshot([row], criteria)[0]
+        assert candidate.open_change_pct == 10.0
+        assert candidate.change_pct == 120.0
+
+    def test_a_stale_gapper_reads_flat_since_the_open(self, criteria):
+        # Up 40% on the day but unchanged since the bell -- the case change_pct
+        # cannot tell apart from a live mover.
+        row = make_row(open=7.0, close=7.0, high=7.3, low=6.8, change_pct=40.0)
+        candidate = candidates_from_snapshot([row], criteria)[0]
+        assert candidate.open_change_pct == 0.0
+
+    def test_pre_open_is_unknown_not_zero(self, criteria):
+        # TradingView reports open=0 before the regular session starts.
+        candidate = candidates_from_snapshot([make_row(open=0.0)], criteria)[0]
+        assert candidate.open_change_pct is None
+        assert candidate.range_position is not None
+
+    def test_range_position_places_the_last_price(self, criteria):
+        row = make_row(open=5.0, low=4.0, high=8.0, close=7.0)
+        assert candidates_from_snapshot([row], criteria)[0].range_position == 0.75
+
+    def test_range_position_is_unknown_with_no_range(self, criteria):
+        row = make_row(open=5.0, low=5.0, high=5.0, close=5.0)
+        assert candidates_from_snapshot([row], criteria)[0].range_position is None
+
+
+class TestIntradayMomentumFilters:
+    def test_min_open_change_drops_a_name_below_its_open(self, criteria):
+        criteria = replace(criteria, min_open_change_pct=0.0)
+        fading = make_row(ticker="FADE", open=10.0, close=9.0, high=10.5, low=8.9)
+        holding = make_row(ticker="HOLD", open=10.0, close=11.0, high=11.2, low=9.9)
+        kept = candidates_from_snapshot([fading, holding], criteria)
+        assert [c.ticker for c in kept] == ["HOLD"]
+
+    def test_pre_open_survives_the_filter(self, criteria):
+        # Same rule as the gap filter: unknown is not a failure, or the 09:25
+        # capture would come back empty every morning.
+        criteria = replace(criteria, min_open_change_pct=0.0)
+        kept = candidates_from_snapshot([make_row(open=0.0)], criteria)
+        assert len(kept) == 1
+
+    def test_min_range_position_drops_a_name_on_its_lows(self, criteria):
+        criteria = replace(criteria, min_range_position=0.5)
+        sinking = make_row(ticker="SINK", open=5.0, low=4.0, high=8.0, close=4.5)
+        strong = make_row(ticker="TOPS", open=5.0, low=4.0, high=8.0, close=7.5)
+        kept = candidates_from_snapshot([sinking, strong], criteria)
+        assert [c.ticker for c in kept] == ["TOPS"]

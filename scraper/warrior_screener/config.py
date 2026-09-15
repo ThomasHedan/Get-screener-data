@@ -34,6 +34,18 @@ class Criteria:
     min_change_pct: float = 10.0  # close vs previous close, in percent
     min_gap_pct: float | None = None  # optional open-vs-prev-close filter
 
+    min_open_change_pct: float | None = None
+    """Minimum move since the regular-session open, in percent. None disables.
+
+    This is the intraday-momentum filter: at the 09:35 capture it screens on
+    the first five minutes alone, where ``min_change_pct`` still measures from
+    yesterday's close and so ranks a stale gapper as a mover. 0.0 means
+    "trading above its open" -- holding the gap rather than giving it back."""
+
+    min_range_position: float | None = None
+    """Minimum position in the day's range, 0.0 (on the low) to 1.0 (on the
+    high). None disables. 0.5 keeps only names in the upper half."""
+
     # --- Volume ---
     min_day_volume: int = 500_000
     min_relative_volume: float = 5.0
@@ -72,6 +84,9 @@ class Criteria:
     weight_change_pct: float = 0.30
     weight_float: float = 0.20  # smaller float ranks higher
     weight_news: float = 0.10
+    weight_open_change: float = 0.0
+    """Weight on the move since the open. 0.0 keeps the ranking as it was;
+    raise it to rank intraday momentum above overnight gap size."""
 
     def validate(self) -> None:
         """Raise ``ValueError`` if the thresholds are internally inconsistent."""
@@ -83,6 +98,8 @@ class Criteria:
             raise ValueError("min_in_play must be <= max_in_play")
         if self.max_float_shares is not None and self.max_float_shares <= 0:
             raise ValueError("max_float_shares must be positive when set")
+        if self.min_range_position is not None and not 0.0 <= self.min_range_position <= 1.0:
+            raise ValueError("min_range_position is a 0-1 position in the day's range")
 
 
 def _coerce(target_type: Any, value: Any) -> Any:

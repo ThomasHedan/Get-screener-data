@@ -61,6 +61,8 @@ CREATE TABLE in_play (
     close            numeric(12, 4) NOT NULL CHECK (close > 0),
     change_pct       numeric(9, 2),
     gap_pct          numeric(9, 2),
+    open_change_pct  numeric(9, 2),
+    range_position   numeric(4, 3) CHECK (range_position BETWEEN 0 AND 1),
     relative_volume  numeric(12, 2),
     volume           bigint        NOT NULL CHECK (volume >= 0),
     average_volume   bigint        CHECK (average_volume IS NULL OR average_volume >= 0),
@@ -75,6 +77,15 @@ COMMENT ON COLUMN in_play.gap_pct IS
     'Open vs. previous close. NULL means not computable -- typically pre-open, '
     'before the symbol has a regular-session open -- and never "did not gap". '
     'Filtering must not treat the two as the same thing.';
+COMMENT ON COLUMN in_play.open_change_pct IS
+    'Move since the regular-session open, with the overnight gap excluded. At '
+    'the 09:35 capture this is the first five minutes; change_pct is not, since '
+    'it measures from the previous close. NULL means not computable (pre-open, '
+    'where TradingView reports open as 0), never "did not move".';
+COMMENT ON COLUMN in_play.range_position IS
+    'Where the last price sat in the day''s range: 0 on the low, 1 on the high. '
+    'NULL when high = low. A high change_pct at a low range_position is a mover '
+    'giving the move back.';
 COMMENT ON COLUMN in_play.relative_volume IS
     'Time-of-day normalized: volume so far today against the average traded by '
     'this clock time over the past 10 sessions. Four digits just after the open '
@@ -93,7 +104,8 @@ CREATE VIEW board AS
 SELECT
     s.id AS scan_id, s.captured_at, s.trade_date, s.phase, s.universe_rows, s.notice,
     p.symbol, t.exchange, t.sector,
-    p.close, p.change_pct, p.gap_pct, p.relative_volume, p.volume,
+    p.close, p.change_pct, p.gap_pct, p.open_change_pct, p.range_position,
+    p.relative_volume, p.volume,
     p.average_volume, p.float_shares, p.market_cap, p.score, p.qualification
 FROM scan s
 JOIN in_play p ON p.scan_id = s.id
@@ -104,7 +116,8 @@ WHERE s.id = (SELECT id FROM scan ORDER BY captured_at DESC LIMIT 1);
 -- the table to query when asking whether a criterion actually predicts anything.
 CREATE VIEW intraday AS
 SELECT s.trade_date, s.captured_at, s.phase, p.symbol,
-       p.close, p.change_pct, p.gap_pct, p.relative_volume, p.volume, p.score
+       p.close, p.change_pct, p.gap_pct, p.open_change_pct, p.range_position,
+       p.relative_volume, p.volume, p.score
 FROM in_play p
 JOIN scan s ON s.id = p.scan_id;
 

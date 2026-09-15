@@ -68,6 +68,24 @@ def candidates_from_snapshot(
         if min_gap is not None and gap_pct is not None and gap_pct < min_gap:
             continue
 
+        # The move since the bell, with the overnight gap taken out. At the
+        # 09:35 capture this is the first five minutes; change_pct is not,
+        # because it still carries the gap. Same rule as gap_pct above: an
+        # uncomputable value is unknown, so it is kept, not rejected.
+        open_change = (row.close - row.open) / row.open * 100.0 if row.open else None
+        min_open_change = criteria.min_open_change_pct
+        if (
+            min_open_change is not None
+            and open_change is not None
+            and open_change < min_open_change
+        ):
+            continue
+
+        position = _range_position(row)
+        min_position = criteria.min_range_position
+        if min_position is not None and position is not None and position < min_position:
+            continue
+
         candidate = Candidate(
             ticker=row.ticker,
             trade_date=trade_date,
@@ -80,6 +98,8 @@ def candidates_from_snapshot(
             gap_pct=_round(gap_pct),
             change_pct=_round(row.change_pct),
             range_pct=_round((row.high - row.low) / row.low * 100.0 if row.low else None),
+            open_change_pct=_round(open_change),
+            range_position=_round(_range_position(row), 3),
             avg_volume=_round(row.average_volume, 1),
             relative_volume=_round(row.relative_volume),
             dollar_volume=_round(row.close * row.volume, 0),
@@ -87,7 +107,6 @@ def candidates_from_snapshot(
             primary_exchange=row.exchange,
             sector=row.sector,
             float_shares=int(row.float_shares) if row.float_shares else None,
-            shares_outstanding=int(row.float_shares) if row.float_shares else None,
             market_cap=row.market_cap,
             # No free bulk news source backs this path -- see the module
             # docstring. news_checked stays False, never claim "no catalyst".
@@ -143,6 +162,17 @@ def _without_exchange_filter(criteria: Criteria) -> Criteria:
     from dataclasses import replace
 
     return replace(criteria, allowed_exchanges=())
+
+
+def _range_position(row: MarketSnapshotRow) -> float | None:
+    """Where the last price sits in today's range: 0.0 on the low, 1.0 on the high.
+
+    The cheapest read on whether a mover is being bought or sold into. A name
+    up 12% but sitting at 0.2 of its range is giving the move back while the
+    screen still presents it as a winner.
+    """
+    span = row.high - row.low
+    return (row.close - row.low) / span if span > 0 else None
 
 
 def _round(value: float | None, digits: int = 2) -> float | None:

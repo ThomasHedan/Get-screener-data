@@ -34,6 +34,21 @@ class Candidate:
     change_pct: float | None = None
     range_pct: float | None = None
 
+    open_change_pct: float | None = None
+    """Move since the regular-session open, in percent -- what the stock has
+    done *today*, with the overnight gap excluded.
+
+    At the 09:35 capture this is literally the first five minutes. ``change_pct``
+    is not: it measures against yesterday's close, so it reads a name that
+    gapped +40% and has gone nowhere since the bell as a +40% mover.
+
+    NULL means not computable -- pre-open, TradingView reports ``open`` as 0 --
+    and never "did not move"."""
+
+    range_position: float | None = None
+    """Where the last price sits in the day's range: 0.0 on the low, 1.0 on the
+    high. NULL when high equals low (nothing has traded through a range yet)."""
+
     # Volume context
     avg_volume: float | None = None
     relative_volume: float | None = None
@@ -43,7 +58,6 @@ class Candidate:
     security_type: str | None = None
     primary_exchange: str | None = None
     sector: str | None = None
-    shares_outstanding: int | None = None
     float_shares: int | None = None
     market_cap: float | None = None
     news_count: int = 0

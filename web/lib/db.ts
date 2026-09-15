@@ -17,6 +17,8 @@ export interface Row {
   changePct: number | null;
   /** null means the gap was not computable, never "did not gap". */
   gapPct: number | null;
+  /** Move since the 09:30 open, overnight gap excluded. Null before the open. */
+  openChangePct: number | null;
   relativeVolume: number | null;
   volume: number;
   floatShares: number | null;
@@ -80,6 +82,7 @@ export async function loadBoard(): Promise<Board | null> {
         close: Number(r.close),
         changePct: num(r.change_pct),
         gapPct: num(r.gap_pct),
+        openChangePct: num(r.open_change_pct),
         relativeVolume: num(r.relative_volume),
         volume: Number(r.volume),
         floatShares: r.float_shares === null ? null : Number(r.float_shares),
