@@ -93,6 +93,18 @@ class TestCoarseFilters:
         no_gap = make_row(open=3.0)  # gap_pct = (3.0-3.0)/3.0 = 0%
         assert candidates_from_snapshot([no_gap], gappy) == []
 
+    def test_unknown_gap_is_not_treated_as_a_gap_down(self, criteria):
+        # TradingView reports open=0 for a name that has not traded the regular
+        # session yet, so gap_pct is undefined pre-open. Dropping those would
+        # empty the 09:25 scan and would call "unknown" a failure -- the mistake
+        # news_checked exists to avoid.
+        gappy = replace(criteria, min_gap_pct=0.0)
+        kept = candidates_from_snapshot([make_row(open=0.0)], gappy)
+        assert len(kept) == 1
+        assert kept[0].gap_pct is None, "an unverified gap must stay visibly unknown"
+        # prev_close derives to 3.0; open=2.7 is a real -10% gap-down and drops.
+        assert candidates_from_snapshot([make_row(open=2.7)], gappy) == []
+
     def test_undefined_prev_close_still_screens_on_change_pct(self, criteria):
         # change_pct comes straight from TradingView; prev_close is only derived
         # for the optional gap filter, so a pathological -100% row must not

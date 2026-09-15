@@ -14,7 +14,15 @@ criteria:
 
   # --- Momentum: up at least 10% on the session.
   min_change_pct: 10.0
-  # min_gap_pct: 4.0        # uncomment to also demand an opening gap
+  # Exclude names that opened *below* the previous close. A gap-down that is
+  # nonetheless up 10%+ on the day is a recovery, not the gap-and-go setup this
+  # screen is built around, and observed 2026-09-14 those kept going lower.
+  # Trade-off to know: this also drops the occasional big intraday runner --
+  # FTFT on 2026-09-09 gapped -3.05% and finished +96.95%. Raise to 4.0 to
+  # demand a real gap, or comment out to stop filtering on gap entirely.
+  # A name whose gap cannot be computed (pre-open, no regular-session open yet)
+  # is kept and reported with an empty gap, not silently dropped.
+  min_gap_pct: 0.0
 
   # --- Volume: real liquidity, and at least 5x its own normal.
   # NOTE: TradingView's relative volume is time-of-day normalized (today's

@@ -59,7 +59,13 @@ def candidates_from_snapshot(
 
         prev_close = row.prev_close
         gap_pct = (row.open - prev_close) / prev_close * 100.0 if prev_close and row.open else None
-        if criteria.min_gap_pct is not None and (gap_pct is None or gap_pct < criteria.min_gap_pct):
+        # An uncomputable gap is unknown, not a gap-down. TradingView reports
+        # open=0 for a name that has not traded the regular session yet, so
+        # gap_pct is undefined pre-open -- dropping those would quietly empty
+        # the 09:25 scan. Same reasoning as news_checked: never turn "we do not
+        # know" into "no". The row carries gap_pct=None so it stays visible as
+        # unverified rather than passing itself off as a confirmed gap-up.
+        if criteria.min_gap_pct is not None and gap_pct is not None and gap_pct < criteria.min_gap_pct:
             continue
 
         candidate = Candidate(
