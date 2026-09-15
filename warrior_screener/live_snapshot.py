@@ -65,7 +65,8 @@ def candidates_from_snapshot(
         # the 09:25 scan. Same reasoning as news_checked: never turn "we do not
         # know" into "no". The row carries gap_pct=None so it stays visible as
         # unverified rather than passing itself off as a confirmed gap-up.
-        if criteria.min_gap_pct is not None and gap_pct is not None and gap_pct < criteria.min_gap_pct:
+        min_gap = criteria.min_gap_pct
+        if min_gap is not None and gap_pct is not None and gap_pct < min_gap:
             continue
 
         candidate = Candidate(
