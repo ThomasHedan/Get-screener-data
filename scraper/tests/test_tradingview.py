@@ -6,12 +6,13 @@ import pytest
 import requests
 
 from warrior_screener.providers.tradingview import (
+    CORE_COLUMNS,
     MarketSnapshotRow,
     TradingViewError,
     fetch_market_snapshot,
 )
 
-COLUMN_COUNT = 15  # must match _COLUMNS in warrior_screener.providers.tradingview
+COLUMN_COUNT = len(CORE_COLUMNS)
 
 
 def _row(ticker: str, exchange: str = "NASDAQ", security_type: str = "stock", **overrides) -> list:
@@ -82,6 +83,34 @@ class FakeSession:
 
 def _single_page(rows: list[list]) -> dict:
     return {"totalCount": len(rows), "data": [{"s": f"X:{r[0]}", "d": r} for r in rows]}
+
+
+class TestColumnFallback:
+    """The extended column list is unverified; the scan must outlive a bad name."""
+
+    def test_extras_are_captured_under_their_tradingview_names(self):
+        from warrior_screener.providers.tradingview import _COLUMNS
+
+        row = _row("RICH") + [None] * (len(_COLUMNS) - COLUMN_COUNT)
+        row[_COLUMNS.index("RSI")] = 78.4
+        session = FakeSession(pages=[_single_page([row])])
+        result = fetch_market_snapshot(session=session)[0]
+        assert result.extra["RSI"] == 78.4
+        # Absent columns are dropped rather than stored as thousands of nulls.
+        assert "SMA200" not in result.extra
+
+    def test_a_refused_column_list_falls_back_to_core_instead_of_failing(self):
+        class RefusesWideRequests(FakeSession):
+            def post(self, url, json, headers, timeout):  # noqa: A002
+                if len(json["columns"]) > COLUMN_COUNT:
+                    raise requests.HTTPError("HTTP 400")
+                return super().post(url, json, headers, timeout)
+
+        session = RefusesWideRequests(pages=[_single_page([_row("CORE")])])
+        result = fetch_market_snapshot(session=session, max_retries=0)
+        assert [r.ticker for r in result] == ["CORE"]
+        assert result[0].extra == {}
+        assert session.calls[-1]["columns"] == list(CORE_COLUMNS)
 
 
 class TestParsing:

@@ -42,8 +42,12 @@ DEFAULT_INTERVAL_SECONDS = 300
 RETRY_BACKOFF_SECONDS = (5, 15)
 
 
-def capture(conn: Any, criteria: Criteria) -> int | None:
-    """Screen the market now and record it. Returns the scan id, or None."""
+def capture(conn: Any, criteria: Criteria, *, store_market: bool = True) -> int | None:
+    """Screen the market now and record it. Returns the scan id, or None.
+
+    ``store_market`` False keeps the board fresh while skipping the corpus row
+    for this tick -- the lever for trading disk against training resolution.
+    """
     for attempt, backoff in enumerate((*RETRY_BACKOFF_SECONDS, None), start=1):
         try:
             result = screen_live(criteria)
@@ -67,14 +71,16 @@ def capture(conn: Any, criteria: Criteria) -> int | None:
         universe_rows=result.stats["universe_rows"],
         notice=market_calendar.staleness_notice(now_et, phase),
         candidates=result.in_play,
+        market=result.market if store_market else (),
     )
     logger.info(
-        "scan %d | %s %s | %d in play of %d scanned | %s",
+        "scan %d | %s %s | %d in play of %d %s | %s",
         scan_id,
         now_et.strftime("%H:%M ET"),
         phase,
         len(result.in_play),
         result.stats["universe_rows"],
+        "stored" if store_market else "scanned (corpus skipped)",
         ", ".join(c.ticker for c in result.in_play) or "nothing selected",
     )
     return scan_id
@@ -87,6 +93,10 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     interval = int(os.environ.get("SCAN_INTERVAL_SECONDS", DEFAULT_INTERVAL_SECONDS))
+    # Store the whole market every Nth capture. 1 keeps everything (~870 MB a
+    # day); raising it trades training resolution for disk without making the
+    # board any staler, since the board is written on every tick regardless.
+    market_every = max(1, int(os.environ.get("STORE_MARKET_EVERY", 1)))
     criteria = load_criteria()
 
     with db.connect() as conn:
@@ -105,14 +115,20 @@ def main(argv: list[str] | None = None) -> int:
 
         signal.signal(signal.SIGTERM, stop)
         signal.signal(signal.SIGINT, stop)
-        logger.info("scraper up: every %ds while a US session is live", interval)
+        logger.info(
+            "scraper up: every %ds while a US session is live, corpus every %d capture(s)",
+            interval,
+            market_every,
+        )
 
+        tick = 0
         while not stopping:
             if market_calendar.session_phase() == "closed":
                 logger.debug("market closed; no scan this tick")
             else:
                 try:
-                    capture(conn, criteria)
+                    capture(conn, criteria, store_market=tick % market_every == 0)
+                    tick += 1
                 except Exception:
                     # A tick must never take the loop down: tomorrow's open
                     # matters more than this scan, and this process is the clock.

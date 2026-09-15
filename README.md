@@ -51,11 +51,69 @@ docker compose exec -T db pg_dump -U screener screener | gzip > screener-$(date 
 gunzip -c screener-2026-09-15.sql.gz | docker compose exec -T db psql -U screener screener
 ```
 
+## The corpus
+
+The screen discards about 99% of what the request already returns — the whole
+market arrives on the wire either way, filtering happens afterwards in Python.
+`snapshot` keeps all of it, because a model trained only on what was selected
+never sees the negative class.
+
+Each row carries the core measures as typed columns and everything else —
+RSI, `Perf.W`, `premarket_change`, moving averages, fundamentals — as JSONB
+under TradingView's own names:
+
+```sql
+SELECT symbol, close, (extra->>'RSI')::real AS rsi
+FROM snapshot
+WHERE trade_date = current_date AND (extra->>'RSI')::real > 90;
+```
+
+**The column names in `EXTENDED_COLUMNS` are not verified.** TradingView's
+scanner is undocumented and rejects the whole request on an unknown column, so
+the scan asks for core + extended and falls back to the 15 core columns alone if
+refused — a wrong guess costs the extra data, never the scan. Find out which are
+real, once, on a machine that can reach the endpoint:
+
+```bash
+docker compose exec scraper python -m warrior_screener.probe_columns
+```
+
+It prints a ready-to-paste `EXTENDED_COLUMNS`. Exit code 2 means the endpoint is
+unreachable and the results are meaningless — a broken network must not read as
+a bad column list.
+
+### What it costs
+
+Measured, not estimated: 10,700 symbols per capture, 446 bytes a row.
+
+| | |
+|---|---|
+| One capture | ~4.7 MB, written in 0.2 s |
+| A day (192 captures) | ~870 MB |
+| A month | ~18 GB |
+| A year | ~215 GB |
+
+Two levers. `STORE_MARKET_EVERY=3` in `.env` thirds it without making the board
+any staler. And **66% of each row is the JSONB** — mostly key names, repeated
+on every row — so promoting the keys that survive `probe_columns` into real
+columns cuts storage by roughly three.
+
+`snapshot` is partitioned by month, so retiring history is instant rather than a
+`DELETE` that leaves the table bloated:
+
+```sql
+DROP TABLE snapshot_2026_09;
+```
+
+Partitions are created on demand by the scraper, which needs the app user to own
+the tables — it does, because the postgres image applies `db/schema.sql` as
+`POSTGRES_USER` on first start.
+
 ## Read the data
 
-Three tables and two views. `board` is the newest capture; `intraday` is every
-capture of every symbol, which is the one to query when asking whether a
-criterion actually predicts anything:
+Four tables and two views. `board` is the newest capture; `intraday` is every
+capture of every *selected* symbol, which is the one to query when asking
+whether a criterion actually predicts anything:
 
 ```sql
 -- Did names that gapped down keep going lower?

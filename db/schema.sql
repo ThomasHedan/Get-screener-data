@@ -107,3 +107,57 @@ SELECT s.trade_date, s.captured_at, s.phase, p.symbol,
        p.close, p.change_pct, p.gap_pct, p.relative_volume, p.volume, p.score
 FROM in_play p
 JOIN scan s ON s.id = p.scan_id;
+
+
+-- ---------------------------------------------------------------- the corpus
+--
+-- Every row of every capture, not just the ones the screen selected. The screen
+-- discards ~99% of what the request already returns; this keeps it, because
+-- training on "what was in play" alone teaches nothing about what was not.
+--
+-- Scale is the design constraint. ~10,700 symbols x a capture every 5 minutes
+-- across a 16-hour extended session is ~2 million rows a day, ~500 million a
+-- year. Hence: real (4 bytes) rather than numeric for the measures -- this is a
+-- research corpus, not a ledger, and ~7 significant digits is well past what a
+-- feature needs -- and RANGE partitioning on trade_date so retiring a month is
+-- a DROP TABLE rather than a DELETE that leaves the table bloated.
+--
+-- Partitions are created on demand by the scraper; see db.ensure_partition.
+CREATE TABLE snapshot (
+    trade_date       date   NOT NULL,
+    scan_id          bigint NOT NULL REFERENCES scan (id) ON DELETE CASCADE,
+    symbol           text   NOT NULL,
+    exchange         text   NOT NULL,
+    security_type    text   NOT NULL,
+    sector           text,
+    open             real,
+    high             real,
+    low              real,
+    close            real,
+    change_pct       real,
+    volume           bigint,
+    relative_volume  real,
+    average_volume   real,
+    market_cap       real,
+    float_shares     real,
+    extra            jsonb,
+    PRIMARY KEY (trade_date, scan_id, symbol)
+) PARTITION BY RANGE (trade_date);
+
+COMMENT ON TABLE snapshot IS
+    'The whole market at each capture -- the training corpus. in_play holds the '
+    'screen''s verdict on the handful it selected; this holds everyone, selected '
+    'or not, which is what makes the negative class learnable.';
+COMMENT ON COLUMN snapshot.extra IS
+    'Every TradingView column beyond the core set, keyed by TradingView''s own '
+    'name (RSI, Perf.W, premarket_change, ...). Absent values are omitted rather '
+    'than stored as null. Promote a key to a real column once it has proved '
+    'itself worth indexing.';
+COMMENT ON COLUMN snapshot.close IS
+    'real, not numeric: 4 bytes across ~500M rows a year, and ~7 significant '
+    'digits is far past what a model feature resolves. The board reads in_play, '
+    'which keeps exact numeric.';
+
+-- Per-symbol history is the access pattern a training set is built on; the
+-- primary key orders by date first and cannot serve it.
+CREATE INDEX snapshot_symbol_idx ON snapshot (symbol, trade_date);

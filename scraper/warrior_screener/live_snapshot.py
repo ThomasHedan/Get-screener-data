@@ -135,6 +135,7 @@ def screen_live(
         candidates=sorted(candidates, key=lambda c: c.score, reverse=True),
         in_play=in_play,
         stats=stats,
+        market=rows,
     )
 
 

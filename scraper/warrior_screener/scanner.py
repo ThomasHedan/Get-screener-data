@@ -37,6 +37,9 @@ class ScanResult:
     candidates: list[Candidate] = field(default_factory=list)
     in_play: list[Candidate] = field(default_factory=list)
     stats: dict[str, Any] = field(default_factory=dict)
+    # Every row the provider returned, before any filtering. The screen ignores
+    # it; it is carried so the capture can be stored whole.
+    market: list[Any] = field(default_factory=list)
 
 
 # ----------------------------------------------------------------- Filtering
