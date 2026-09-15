@@ -35,6 +35,11 @@ logger = logging.getLogger("warrior_screener.scraper")
 
 DEFAULT_INTERVAL_SECONDS = 300
 
+# Times-of-day (ET) that are always captured, whatever the interval. The open
+# drive is decided in the first minutes and 09:31 is not reachable from a
+# 5-minute grid: 09:30 is the bell itself, 09:35 is already four minutes late.
+DEFAULT_SCAN_AT = "09:31,09:35"
+
 # Two quick retries inside the tick. The point is to ride out a blip in an
 # undocumented endpoint without waiting a whole interval: five minutes of
 # staleness just after the open is the difference between a usable board and a
@@ -97,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     # day); raising it trades training resolution for disk without making the
     # board any staler, since the board is written on every tick regardless.
     market_every = max(1, int(os.environ.get("STORE_MARKET_EVERY", 1)))
+    pinned = market_calendar.parse_times(os.environ.get("SCAN_AT", DEFAULT_SCAN_AT))
     criteria = load_criteria()
 
     with db.connect() as conn:
@@ -116,8 +122,10 @@ def main(argv: list[str] | None = None) -> int:
         signal.signal(signal.SIGTERM, stop)
         signal.signal(signal.SIGINT, stop)
         logger.info(
-            "scraper up: every %ds while a US session is live, corpus every %d capture(s)",
+            "scraper up: every %ds on the clock (always at %s ET) while a US session is "
+            "live, corpus every %d capture(s)",
             interval,
+            ", ".join(moment.strftime("%H:%M") for moment in pinned) or "no pinned time",
             market_every,
         )
 
@@ -133,9 +141,13 @@ def main(argv: list[str] | None = None) -> int:
                     # A tick must never take the loop down: tomorrow's open
                     # matters more than this scan, and this process is the clock.
                     logger.exception("unexpected error during capture; continuing")
-            for _ in range(interval):
-                if stopping:
-                    break
+            # Wait for a wall-clock moment rather than a duration, so a slow
+            # scan cannot push every later capture off its mark.
+            wake_at = market_calendar.next_capture(
+                datetime.now(market_calendar.EASTERN), interval, pinned
+            )
+            logger.debug("next capture at %s", wake_at.strftime("%H:%M:%S %Z"))
+            while not stopping and datetime.now(market_calendar.EASTERN) < wake_at:
                 time.sleep(1)
 
     logger.info("scraper stopped")

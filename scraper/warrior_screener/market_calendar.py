@@ -19,7 +19,8 @@ practice for exactly this reason in lightweight tools.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from collections.abc import Sequence
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 EASTERN = ZoneInfo("America/New_York")
@@ -118,3 +119,41 @@ def staleness_notice(now_et: datetime, phase: str) -> str | None:
             "today's regular session plus after-hours activity."
         )
     return None
+
+
+def parse_times(raw: str) -> tuple[time, ...]:
+    """Parse ``"09:31,09:35"`` into Eastern times-of-day, in order.
+
+    Pinned in ET rather than local time on purpose: Paris and New York change
+    clocks on different dates, so a time pinned in local time drifts an hour
+    away from the open twice a year.
+    """
+    return tuple(
+        sorted(time.fromisoformat(part.strip()) for part in raw.split(",") if part.strip())
+    )
+
+
+def next_capture(now: datetime, interval_seconds: int, pinned: Sequence[time] = ()) -> datetime:
+    """The next moment worth capturing: the next clock-aligned tick, or the
+    next pinned time-of-day, whichever comes first.
+
+    Two properties the previous "sleep(interval) after each scan" did not have:
+
+    * **Aligned.** Ticks land on clock boundaries (09:30, 09:35, ...) instead
+      of wherever the container happened to start, and they stop drifting by
+      however long each scan took.
+    * **Pinned.** ``pinned`` times are always hit, whatever the interval. The
+      open drive is decided in the first minutes; 09:31 is not reachable from
+      a 5-minute grid.
+
+    A pinned time that coincides with an aligned tick yields one moment, not
+    two -- ``scan.captured_at`` is UNIQUE, and a double capture would collide.
+    """
+    now = now.astimezone(EASTERN)
+    step = max(1, interval_seconds)
+    # Align on the epoch so the grid survives a DST change intact.
+    moments = [datetime.fromtimestamp((int(now.timestamp()) // step + 1) * step, EASTERN)]
+    for offset in (0, 1):  # today's pinned times, then tomorrow's, for late evenings
+        day = now.date() + timedelta(days=offset)
+        moments.extend(datetime.combine(day, moment, EASTERN) for moment in pinned)
+    return min(moment for moment in moments if moment > now)

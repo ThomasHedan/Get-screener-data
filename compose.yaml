@@ -31,6 +31,8 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-screener}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-screener}
       SCAN_INTERVAL_SECONDS: ${SCAN_INTERVAL_SECONDS:-300}
+      SCAN_AT: ${SCAN_AT:-09:31,09:35}
+      STORE_MARKET_EVERY: ${STORE_MARKET_EVERY:-1}
     depends_on:
       db: { condition: service_healthy }
 

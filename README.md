@@ -35,6 +35,12 @@ while a US session is live — pre-market 04:00 ET through after-hours 20:00 ET,
 trading days only. Outside those hours the scraper makes no network call, which
 is correct rather than broken.
 
+Captures land on a clock-aligned grid (`SCAN_INTERVAL_SECONDS=300` gives :00,
+:05, :10 …) rather than a countdown from container start, so a slow scan cannot
+push the later ones off their mark. `SCAN_AT` pins times that are hit whatever
+the interval — 09:31 and 09:35 ET by default, the two minutes that decide the
+open drive and that a 5-minute grid cannot reach.
+
 ## Operate
 
 ```bash
