@@ -1,3 +1,5 @@
-requests>=2.31
-PyYAML>=6.0
-psycopg[binary]>=3.2
+# Capped at the next major: a rebuild months from now must resolve to a version
+# this code was written against, not to whatever landed since.
+requests>=2.31,<3
+PyYAML>=6.0,<7
+psycopg[binary]>=3.2,<4
