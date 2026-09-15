@@ -1,0 +1,227 @@
+/* Palette: the data-viz reference instance. Light values on :root, dark values
+   redefined for the OS setting — every colour has a definition in both modes. */
+:root {
+  color-scheme: light;
+  --plane: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-muted: #898781;
+  --rule: #e1e0d9;
+  --series: #2a78d6;
+  --good: #0ca30c;
+  --warning: #fab219;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --plane: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --rule: #2c2c2a;
+    --series: #3987e5;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--plane);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Every figure on the page is read by comparison down a column, so all of them
+   are monospaced and tabular — digits must not shift width between rows. */
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+.page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding-block: 40px 64px;
+  padding-inline: 20px;
+}
+
+/* ---------------------------------------------------------------- masthead */
+
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--rule);
+}
+
+h1 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.stamp {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.phase {
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.phase[data-live="true"] { border-color: var(--good); color: var(--good); }
+
+/* A stale board must say so louder than it says anything else. */
+.notice {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--warning);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.notice::before { content: "!"; color: var(--warning); font-weight: 700; }
+
+/* ------------------------------------------------------------------- tiles */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1px;
+  margin: 28px 0 32px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.tile { padding: 16px 18px; background: var(--surface); }
+.tile dt {
+  color: var(--ink-muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.tile dd {
+  margin: 4px 0 0;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* ------------------------------------------------------------------- board */
+
+.scroller { overflow-x: auto; }
+
+table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+}
+
+th {
+  padding: 0 12px 10px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-align: right;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+th:first-child, th.left { text-align: left; }
+
+td {
+  padding: 13px 12px;
+  border-bottom: 1px solid var(--rule);
+  text-align: right;
+  white-space: nowrap;
+}
+td:first-child, td.left { text-align: left; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--surface); }
+
+.rank { width: 1%; color: var(--ink-muted); font-size: 13px; }
+
+.symbol { font-family: var(--mono); font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.sector { color: var(--ink-muted); font-size: 11px; }
+
+.up { color: var(--good); }
+.down { color: var(--critical); }
+.unknown { color: var(--ink-muted); }
+
+/* Score: the bar carries the comparison, the number carries the value. */
+.score { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.score-track {
+  display: inline-block;   /* an inline span would ignore width and height */
+  width: 54px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--rule);
+}
+.score-fill { display: block; height: 100%; border-radius: 2px; background: var(--series); }
+
+.badge {
+  padding: 2px 7px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  color: var(--ink-muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.badge[data-strict="true"] { border-color: var(--good); color: var(--good); }
+
+/* ------------------------------------------------------------------ footer */
+
+.empty {
+  padding: 64px 20px;
+  border: 1px dashed var(--rule);
+  border-radius: 4px;
+  color: var(--ink-2);
+  text-align: center;
+}
+
+footer {
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule);
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+footer p { margin: 0 0 6px; }
+
+@media (max-width: 600px) {
+  .page { padding-block: 28px 48px; }
+  .tile dd { font-size: 22px; }
+}

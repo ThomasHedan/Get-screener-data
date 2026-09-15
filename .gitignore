@@ -1,27 +1,14 @@
 # Python
 __pycache__/
 *.py[cod]
-*.egg-info/
-.venv/
-venv/
 .pytest_cache/
-.mypy_cache/
 .ruff_cache/
-
-# Secrets
-.env
-*.key
-
-# Scan output. data/today.json is the dashboard's only data source and is
-# committed on purpose -- the refresh workflow pushing it is what redeploys the
-# site, and the commit history doubles as the archive of past sessions.
-data/*
-!data/.gitkeep
-!data/today.json
+.venv/
 
 # Node / Next.js
 node_modules/
 .next/
-out/
 next-env.d.ts
-.vercel
+
+# Secrets
+.env
