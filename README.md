@@ -1,210 +1,175 @@
-# Warrior Trading Screener
+# Warrior Screener
 
-A dashboard of the low-float momentum stocks that are **in play** — the Ross
-Cameron / Warrior Trading gap-and-go profile — screened from the whole US
-market in a single request, refreshed two hours before the open, and deployed
-as a static page on Vercel.
+A knowledge base of the low-float momentum names **in play** — the Ross Cameron
+gap-and-go profile — screened from the whole US market every few minutes and
+kept, so the session can be read back later.
 
-The screen is Python (`warrior_screener/`). The board is a Next.js page
-(`app/`). Between them is one committed file, `data/today.json`: the screener
-writes it, a GitHub Actions workflow commits it, and that push is what
-redeploys the site.
-
----
-
-## The screen
-
-| # | Criterion | Default | Config key |
-|---|-----------|---------|------------|
-| 1 | Up on the day | **≥ 10%** vs. previous close | `min_change_pct` |
-| 2 | Price | **$1 – $20** | `min_price` / `max_price` |
-| 3 | Relative volume | **≥ 5×** | `min_relative_volume` |
-| 4 | Float | **< 10M shares** | `max_float_shares` |
-| 5 | News catalyst | **≥ 1 headline** | `require_news_catalyst` |
-
-Plus universe hygiene: common stock and ADRs only, major exchanges only, and a
-`min_day_volume` floor (500k shares) so untradeable names never reach the list.
-
-### Ranking: which 5–10?
-
-Every candidate that clears the filters gets a composite score in `[0, 1]`:
+TradingView's screener has no notion of a past instant: it always answers about
+the live session. "What was in play at 09:35" therefore has an answer only if
+something recorded it at 09:35. That recording is the point of this project.
 
 ```
-score = 0.40 · rank(relative volume)
-      + 0.30 · rank(% change)
-      + 0.20 · rank(−float)          # smaller float ranks higher
-      + 0.10 · min(news, 3) / 3
+db ─── postgres, every capture ever taken
+ ├── scraper   screens on its own clock, writes
+ └── web       reads the newest capture, renders the board
 ```
 
-The components are **percentile ranks within that day's own candidate pool**,
-not absolute values. That keeps scores comparable between a sleepy Tuesday and
-a small-cap frenzy, and stops one 400×-RVOL outlier from flattening everything
-else. All weights live in `config/criteria.yml`.
+Only `web` publishes a port.
 
-### Strict vs. relaxed
+## Install
 
-Some sessions genuinely do not have five stocks with a sub-10M float running 5×
-volume on a catalyst. Rather than return two names or invent three, the selector
-tops the list up to `min_in_play` with the best names that fail *only* the
-relaxable criteria (float, RVOL, news) and tags them `relaxed`. The
-price/change/volume/exchange core is never relaxed. The board shows the tag and
-which criteria each relaxed name missed.
-
----
-
-## Two things this data is not
-
-**Relative volume is time-of-day normalized.** TradingView compares volume so
-far today against the average traded *by this same clock time* over the past 10
-sessions — not today's total against an N-day average total. Before the open it
-is comparing two thin pre-market windows, so it reads high and noisy, and only
-converges toward a full-day RVOL near the close.
-
-**Nothing checks for news.** There is no free bulk news source behind this
-screen, so the catalyst criterion never actually runs: every row carries
-`news_checked: false` and lands as `relaxed` rather than `strict`. That is the
-honest state of things — "unknown", not "no catalyst". Pass `--no-news` to drop
-the criterion and see the structural qualifiers as `strict`.
-
-**And the pre-open board is partly stale by design.** TradingView has no "no
-trades yet" signal: it always answers with the most recent session. At 07:30 ET
-the names already gapping on real pre-market volume are live, and the quieter
-ones still show yesterday's numbers. The scan detects this
-(`warrior_screener/market_calendar.py`), writes the caveat into
-`data/today.json`, and the page prints it as a banner.
-
----
-
-## Running it yourself
-
-Requires **Python 3.10+** and **Node 18.18+**. No API key: the screen calls
-TradingView's public scanner endpoint (`scanner.tradingview.com`), the same
-JSON call `tradingview.com/screener` makes.
+On Ubuntu Server 24.04 (or any Docker host):
 
 ```bash
-pip install -r requirements.txt
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER && newgrp docker
 
-python -m warrior_screener snapshot                    # print the board
-python -m warrior_screener snapshot --no-news          # structural qualifiers as strict
-python -m warrior_screener snapshot --json             # write data/today.json
+git clone https://github.com/ThomasHedan/Get-screener-data.git
+cd Get-screener-data
+cp .env.example .env        # set POSTGRES_PASSWORD
+docker compose up -d --build
 ```
 
-Then the dashboard:
+The board is on port 80. The first capture lands on the next tick, and only
+while a US session is live — pre-market 04:00 ET through after-hours 20:00 ET,
+trading days only. Outside those hours the scraper makes no network call, which
+is correct rather than broken.
+
+Captures land on a clock-aligned grid (`SCAN_INTERVAL_SECONDS=300` gives :00,
+:05, :10 …) rather than a countdown from container start, so a slow scan cannot
+push the later ones off their mark. `SCAN_AT` pins times that are hit whatever
+the interval — 09:31 and 09:35 ET by default, the two minutes that decide the
+open drive and that a 5-minute grid cannot reach.
+
+## Operate
 
 ```bash
-npm install
-npm run screen     # refresh data/today.json
-npm run dev        # http://localhost:3000
+# What is in play right now, as JSON. No database, no containers — one request.
+cd scraper && pip install -r requirements.txt
+python -m warrior_screener.scraper --dry-run
 ```
-
-`npm run build` produces a static export in `out/`.
-
-> **That endpoint is unofficial and undocumented.** It is reverse-engineered,
-> with no published contract or SLA, and could change or start blocking
-> non-browser traffic without notice. Treat it as a convenience, not
-> infrastructure. When it is unreachable the screen exits non-zero and nothing
-> is committed, so the board keeps showing the last good scan rather than
-> going blank.
-
-### Tuning the screen
-
-Every threshold is in `config/criteria.yml`, and the ones worth changing often
-are also CLI flags:
 
 ```bash
-python -m warrior_screener snapshot --max-float 20000000 --min-change 20
-python -m warrior_screener snapshot --max-float 0        # disable the float filter
-python -m warrior_screener snapshot --strict-only        # never pad to min_in_play
+docker compose logs -f scraper     # capture by capture, with the names selected
+docker compose ps                  # db reports healthy/unhealthy
+docker compose exec db psql -U screener screener
 ```
-
----
-
-## The daily refresh
-
-`.github/workflows/refresh.yml` runs the screen at **07:30 ET on weekdays**, two
-hours before the open, and commits `data/today.json`.
-
-GitHub cron is UTC-only, so 07:30 ET is two entries plus a guard rather than one
-line: 11:30 UTC is 07:30 EDT but 06:30 EST, and 12:30 UTC is the reverse. Both
-fire year-round and the guard lets exactly one through — whichever currently
-lands in the 07:00–08:30 ET window. The window is wider than a minute because
-GitHub's scheduler runs late under load; a refresh at 07:50 beats none. Market
-holidays are skipped via `market_calendar.is_trading_day`.
-
-Two things to know:
-
-- **Scheduled workflows only run from the repository's default branch.** The
-  cron will not fire while this lives on a feature branch — merge it first, or
-  trigger it by hand from the Actions tab (`workflow_dispatch` skips the time
-  guard).
-- **Update `US_MARKET_HOLIDAYS` every January** in
-  `warrior_screener/market_calendar.py`. There is no free unauthenticated bulk
-  calendar API, so the list is hardcoded; a date past its coverage falls back to
-  "any weekday is a trading day".
-
-To refresh more often than once a day, add cron entries and widen the guard
-window. Vercel's own cron on the Hobby plan is once-daily, which is why the
-schedule lives in Actions.
-
----
-
-## Deploying
-
-The site is a Next.js static export. `vercel.json` pins
-`"framework": "nextjs"`, which matters here: this repository was Python-only
-when its Vercel project was first created, so the project's saved preset is
-`python` and the build fails with *"No python entrypoint found"* until
-something overrides it. Settings in `vercel.json` take precedence over the
-dashboard preset, so the fix travels with the repo instead of living in one
-person's project settings.
-
-Beyond that, importing the repository is the whole setup. Every push that
-changes `data/today.json` triggers a redeploy, which is how the board stays
-current without a server.
-
----
-
-## Project layout
-
-```
-warrior_screener/
-  cli.py               `snapshot`, the table, and the JSON the dashboard reads
-  live_snapshot.py     TradingView rows -> scored candidates
-  scanner.py           the screen itself: filters, scoring, selection (pure)
-  config.py            criteria + settings, loaded from config/criteria.yml
-  market_calendar.py   is the market open, and is this data actually today's
-  models.py            Candidate and friends
-  providers/
-    tradingview.py     the one HTTP call, and its column mapping
-app/                   the dashboard (page.tsx, layout.tsx, globals.css)
-lib/screener.ts        the payload's TypeScript shape and formatting helpers
-data/today.json        the committed scan the page renders
-```
-
-`scanner.py` does no I/O: it takes candidates somebody else built and applies
-the filters, the score and the selection. That is what lets the same screen
-definition run against a different data source without touching it.
-
----
-
-## Known data limitation: float vs. shares outstanding
-
-No mainstream free API publishes true **free float**. This uses TradingView's
-float figure, which for most small caps is shares outstanding or close to it,
-and therefore **overstates** float on exactly the names this screen targets
-(insider and locked-up shares included). The float filter is consequently
-*conservative*: it rejects some genuine low-float runners, and never invents
-one.
-
----
-
-## Tests
 
 ```bash
-pip install -r requirements-dev.txt
-pytest          # 111 tests, no network, no API key
-ruff check .
+# Back up the knowledge base
+docker compose exec -T db pg_dump -U screener screener | gzip > screener-$(date +%F).sql.gz
+
+# Restore
+gunzip -c screener-2026-09-15.sql.gz | docker compose exec -T db psql -U screener screener
 ```
 
-The suite builds TradingView rows directly (`tests/test_live_snapshot.make_row`),
-so nothing in it touches the live endpoint.
+## The corpus
+
+The screen discards about 99% of what the request already returns — the whole
+market arrives on the wire either way, filtering happens afterwards in Python.
+`snapshot` keeps all of it, because a model trained only on what was selected
+never sees the negative class.
+
+Each row carries the core measures as typed columns and everything else —
+RSI, `Perf.W`, `premarket_change`, moving averages, fundamentals — as JSONB
+under TradingView's own names:
+
+```sql
+SELECT symbol, close, (extra->>'RSI')::real AS rsi
+FROM snapshot
+WHERE trade_date = current_date AND (extra->>'RSI')::real > 90;
+```
+
+**The column names in `EXTENDED_COLUMNS` are not verified.** TradingView's
+scanner is undocumented and rejects the whole request on an unknown column, so
+the scan asks for core + extended and falls back to the 15 core columns alone if
+refused — a wrong guess costs the extra data, never the scan. Find out which are
+real, once, on a machine that can reach the endpoint:
+
+```bash
+docker compose exec scraper python -m warrior_screener.probe_columns
+```
+
+It prints a ready-to-paste `EXTENDED_COLUMNS`. Exit code 2 means the endpoint is
+unreachable and the results are meaningless — a broken network must not read as
+a bad column list.
+
+### What it costs
+
+Measured, not estimated: 10,700 symbols per capture, 446 bytes a row.
+
+| | |
+|---|---|
+| One capture | ~4.7 MB, written in 0.2 s |
+| A day (192 captures) | ~870 MB |
+| A month | ~18 GB |
+| A year | ~215 GB |
+
+Two levers. `STORE_MARKET_EVERY=3` in `.env` thirds it without making the board
+any staler. And **66% of each row is the JSONB** — mostly key names, repeated
+on every row — so promoting the keys that survive `probe_columns` into real
+columns cuts storage by roughly three.
+
+`snapshot` is partitioned by month, so retiring history is instant rather than a
+`DELETE` that leaves the table bloated:
+
+```sql
+DROP TABLE snapshot_2026_09;
+```
+
+Partitions are created on demand by the scraper, which needs the app user to own
+the tables — it does, because the postgres image applies `db/schema.sql` as
+`POSTGRES_USER` on first start.
+
+## Read the data
+
+Four tables and two views. `board` is the newest capture; `intraday` is every
+capture of every *selected* symbol, which is the one to query when asking
+whether a criterion actually predicts anything:
+
+```sql
+-- Did names that gapped down keep going lower?
+SELECT symbol,
+       min(close)  FILTER (WHERE phase = 'pre-market') AS pre,
+       max(close)  FILTER (WHERE phase = 'regular')    AS regular,
+       max(gap_pct)                                     AS gap
+FROM intraday
+WHERE trade_date = current_date
+GROUP BY symbol
+ORDER BY gap;
+```
+
+Columns carry their caveats as SQL comments — `\d+ in_play` in psql, or
+`COMMENT ON` in `db/schema.sql`.
+
+## Tune the screen
+
+Every threshold is in `scraper/config/criteria.yml`, a flat mapping. An unknown
+key is an error, not a silent no-op — a typo would otherwise leave the screen
+running on a default you believe you changed.
+
+```bash
+docker compose restart scraper      # after editing
+```
+
+## Develop
+
+```bash
+cd scraper && pip install -r requirements.txt -r requirements-dev.txt && pytest
+cd web && npm install && npm run dev
+```
+
+## Two things the data is not
+
+**Relative volume is time-of-day normalised** — volume so far today against the
+average traded by this clock time over the past 10 sessions, not a full-session
+ratio. Four digits just after the open is correct, and it is not comparable to a
+full-day RVOL.
+
+**Nothing checks for a news catalyst.** No free bulk news source backs this
+screen, so every name lands `relaxed`. That is "unknown", not "no catalyst" —
+and an empty `gap_pct` means it could not be computed, not that the name did not
+gap. The screen is careful never to turn either into a verdict.
+
+The TradingView endpoint is undocumented and unauthenticated. It is a fast, free
+path for a live check, not something with an SLA.

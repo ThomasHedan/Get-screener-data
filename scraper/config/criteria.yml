@@ -1,0 +1,73 @@
+# The screen. A flat mapping of thresholds -- edit, restart the scraper, compare.
+# An unknown key here is an error, not a silent no-op.
+
+# --- Price: cheap stocks. $2-$10 is the sweet spot, $20 the hard cap.
+min_price: 1.0
+max_price: 20.0
+
+# --- Momentum: up at least 10% on the session.
+min_change_pct: 10.0
+
+# --- Gap: ignore names that opened below the previous close. A gap-down that is
+# nonetheless up 10%+ is a recovery, not the gap-and-go setup this screen is
+# built around, and observed 2026-09-14 those kept going lower. The cost is real
+# though: FTFT on 2026-09-09 gapped -3.05% and finished +96.95%. Raise to 4.0 to
+# demand a true gap, or set to null to stop filtering on gap.
+# A name whose gap cannot be computed (pre-open, no regular-session open yet) is
+# kept and stored with an empty gap -- "unknown" is not "did not gap".
+min_gap_pct: 0.0
+
+# --- Intraday momentum: the move since the bell, gap excluded.
+# At the 09:35 capture this IS the first five minutes. min_change_pct above
+# cannot express that: it measures from yesterday's close, so a name that
+# gapped +40% and has gone nowhere since 09:30 still reads +40% and outranks a
+# name that gapped +5% and then ripped +25% in five minutes.
+#   0.0   trading above its open -- holding the gap rather than giving it back
+#   3.0   demand a real push off the open
+#   null  off
+# Pre-open a name has no regular-session open, so this is unknown and the name
+# is kept -- same rule as min_gap_pct.
+min_open_change_pct: null
+
+# --- Where it sits in the day's range: 0 on the low, 1 on the high.
+# 0.5 keeps only the upper half. The cheapest guard against buying a mover that
+# is already being sold into. null disables.
+min_range_position: null
+
+# --- Volume: real liquidity, and at least 5x its own normal.
+# TradingView's relative volume is time-of-day normalized (volume so far today
+# vs. the average traded by this clock time over the past 10 sessions), not a
+# full-session ratio. Before the open it compares two thin pre-market windows,
+# so it runs noisier and larger. Read 5.0 accordingly.
+min_day_volume: 500000
+min_relative_volume: 5.0
+
+# --- Share structure: low float is the whole point. null disables.
+max_float_shares: 10000000
+max_market_cap: null
+
+# --- Catalyst: a gapper without news is usually not worth trading. No free bulk
+# news source backs the live path, so nothing ever sets news_checked=True and
+# every name lands `relaxed` while this is on. That is the honest state of
+# things -- "unknown", not "no catalyst".
+require_news_catalyst: true
+min_news_articles: 1
+
+# --- Universe hygiene: common stock and ADRs on major exchanges only.
+allowed_security_types: ["CS", "ADRC"]
+allowed_exchanges: ["XNAS", "XNYS", "XASE", "ARCX", "BATS"]
+
+# --- Selection: keep 5-10 names per capture.
+max_in_play: 10
+min_in_play: 5
+fill_to_min: true
+relaxed_drop_filters: ["float", "news", "news_unknown", "relative_volume"]
+
+# --- Ranking weights, applied to percentile ranks inside the capture's pool.
+weight_relative_volume: 0.40
+weight_change_pct: 0.30
+weight_float: 0.20  # smaller float ranks higher
+weight_news: 0.10
+# Rank on the move since the open. Raise it (and lower weight_change_pct) to
+# rank intraday momentum above overnight gap size. 0.0 leaves ranking as it was.
+weight_open_change: 0.0

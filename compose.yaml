@@ -1,0 +1,50 @@
+# Three services on one private network. Only the web publishes a port.
+#
+#   db      postgres, the knowledge base
+#   scraper screens the market on its own clock and writes every capture
+#   web     reads the newest capture and renders the board
+#
+# Everything is driven by .env — copy .env.example and edit it.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-screener}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-screener}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Runs once, on an empty data directory. Changing the schema afterwards
+      # needs a migration -- editing this file does nothing to a live cluster.
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-screener} -d ${POSTGRES_DB:-screener}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  scraper:
+    build: ./scraper
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-screener}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-screener}
+      SCAN_INTERVAL_SECONDS: ${SCAN_INTERVAL_SECONDS:-300}
+      SCAN_AT: ${SCAN_AT:-09:31,09:35}
+      STORE_MARKET_EVERY: ${STORE_MARKET_EVERY:-1}
+    depends_on:
+      db: { condition: service_healthy }
+
+  web:
+    build: ./web
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-screener}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-screener}
+    ports:
+      - "${WEB_PORT:-80}:3000"
+    depends_on:
+      db: { condition: service_healthy }
+
+volumes:
+  pgdata:
