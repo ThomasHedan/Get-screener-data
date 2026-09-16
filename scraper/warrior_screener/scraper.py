@@ -18,6 +18,7 @@ recorded with every scan is what tells the reader which they are looking at.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import signal
@@ -91,9 +92,63 @@ def capture(conn: Any, criteria: Criteria, *, store_market: bool = True) -> int 
     return scan_id
 
 
+def _print_board(criteria: Criteria) -> int:
+    """Screen once and print the result as JSON, touching no database.
+
+    The scraper's job is to record; this is the other thing people want from
+    it -- "what is in play right now" -- answered in one command from a bare
+    checkout, with no Postgres to stand up first. Nothing is written, so it is
+    also the safe way to try a threshold change before committing to it.
+    """
+    from datetime import datetime
+
+    now_et = datetime.now(market_calendar.EASTERN)
+    phase = market_calendar.session_phase(now_et)
+    try:
+        result = screen_live(criteria)
+    except TradingViewError as exc:
+        print(f"TradingView unreachable: {exc}", file=sys.stderr)
+        return 2
+
+    print(
+        json.dumps(
+            {
+                "captured_at": now_et.isoformat(timespec="seconds"),
+                "phase": phase,
+                "notice": market_calendar.staleness_notice(now_et, phase),
+                "universe_rows": result.stats["universe_rows"],
+                "in_play": [
+                    {
+                        "ticker": c.ticker,
+                        "close": c.close,
+                        "change_pct": c.change_pct,
+                        "open_change_pct": c.open_change_pct,
+                        "range_position": c.range_position,
+                        "gap_pct": c.gap_pct,
+                        "relative_volume": c.relative_volume,
+                        "volume": c.volume,
+                        "float_shares": c.float_shares,
+                        "sector": c.sector,
+                        "score": c.score,
+                        "qualification": c.qualification,
+                    }
+                    for c in result.in_play
+                ],
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--once", action="store_true", help="capture once and exit")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="screen once, print the board as JSON, write nothing (no database needed)",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -104,6 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     market_every = max(1, int(os.environ.get("STORE_MARKET_EVERY", 1)))
     pinned = market_calendar.parse_times(os.environ.get("SCAN_AT", DEFAULT_SCAN_AT))
     criteria = load_criteria()
+
+    if args.dry_run:
+        return _print_board(criteria)
 
     with db.connect() as conn:
         if args.once:

@@ -44,6 +44,12 @@ open drive and that a 5-minute grid cannot reach.
 ## Operate
 
 ```bash
+# What is in play right now, as JSON. No database, no containers — one request.
+cd scraper && pip install -r requirements.txt
+python -m warrior_screener.scraper --dry-run
+```
+
+```bash
 docker compose logs -f scraper     # capture by capture, with the names selected
 docker compose ps                  # db reports healthy/unhealthy
 docker compose exec db psql -U screener screener
